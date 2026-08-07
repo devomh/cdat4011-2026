@@ -1,0 +1,164 @@
+---
+title: "Convolutional Neural Networks"
+unit: "V"
+lesson: "18"
+type: concept
+tags: [deep-learning, pytorch, cnn, convolution, pooling, image-classification, computer-vision]
+difficulty: intermediate
+duration: "90 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Explain** what a convolutional layer does -- a small filter slid over local receptive fields with
+  shared weights -- and why that gives parameter sharing and translation invariance. *(Understand)*
+- **Compute and read** a convolution (a kernel applied over each patch produces a feature map) and
+  **describe** what pooling does. *(Apply / Understand -- in the lab)*
+- **Build** a CNN in PyTorch (`nn.Conv2d` + `nn.MaxPool2d` + `nn.Linear`) and **trace** the spatial
+  dimensions through it (28 -> 14 -> 7). *(Apply -- in the lab)*
+- **Demonstrate** that a CNN beats a plain MLP on images and **explain** why. *(Apply / Analyze)*
+
+> **Where this sits:** after `L17 — Training Deep Networks`, which made deep nets trainable. This is
+> the first architecture built for a specific **data type** -- images. · next: `L19 — CNN
+> Architectures & Transfer Learning`, which assembles these layers into the famous networks and
+> reuses pretrained ones.
+>
+> **Hands-on:** [Lab — Build a CNN for Image Classification](l18_lab_cnn.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u05_deep_learning/l18_lab_cnn.ipynb)
+
+## Why This Matters
+
+An MLP sees an image the way you would see a shuffled bag of its pixels: it **flattens** the 28x28
+grid into 784 numbers and forgets which pixel sat next to which. Yet everything that makes a shoe a
+shoe is *spatial* -- edges, curves, the relationship between neighboring pixels. The analogy: reading
+a page by being handed its letters in a random pile versus reading them in place.
+
+A **convolution** reads the image *in place*. It slides a small **filter** -- a magnifying glass
+tuned to one pattern, like a vertical edge -- across the picture, and at every location reports how
+strongly that pattern is present. Because the same magnifying glass is reused everywhere, a CNN
+learns a pattern **once** and can spot it **anywhere**, using a handful of weights instead of one per
+pixel. That single idea, inspired by the visual cortex (Hubel & Wiesel) and proven by LeCun's LeNet-5
+on handwritten digits, is what makes deep learning work on images.
+
+## The Problem with Flattening
+
+The L15 MLP flattens an image to a vector and wires every pixel to every hidden unit. Two costs
+follow. First, **parameters explode**: a dense layer from 784 pixels to 784 units already has over
+600,000 weights, and real images are far larger. Second, there is **no translation invariance**: a
+weight that learned "edge here, top-left" knows nothing about the same edge bottom-right -- the MLP
+must relearn every pattern at every position. Convolution removes both costs at once.
+
+## The Convolutional Layer
+
+A neuron in a convolutional layer is **not** connected to every pixel -- only to a small **local
+receptive field**, a patch of the input. Its weights form a **filter** (or **kernel**), a small
+matrix that is **slid across the whole image**. At each position you multiply the filter by the patch
+it covers and sum -- that is the **convolution operation** -- producing one number. Sweep the filter
+over every position and the numbers form a **feature map**: a picture of *where in the image that
+filter's pattern fires*.
+
+Two knobs set the output size: the **stride** (how far the filter steps each move) and **zero-padding**
+(adding a border of zeros so the output can keep the input's height and width). The decisive property
+is **parameter sharing**: the *same* filter weights are used at every position. So a 3x3 filter is
+just nine weights (plus a bias), no matter how large the image -- and whatever pattern it learns is
+detected **anywhere** it appears. That is **translation invariance**, and it is exactly what an MLP
+lacks.
+
+## Channels and Stacking
+
+Images have **channels** -- depth: 1 for grayscale, 3 for RGB. A filter always spans *all* input
+channels (a 3x3 filter on an RGB image is really 3x3x3 weights). A single filter detects a single
+pattern, so a convolutional layer holds **many** filters, each producing its own feature map. The
+layer's output is therefore a stack of feature maps -- its own depth, fed as the channels of the next
+layer. Early layers learn low-level patterns (edges, blobs); later layers combine them into a
+**feature hierarchy** -- parts, then whole objects.
+
+## Pooling
+
+A **pooling layer** subsamples each feature map over small windows -- typically taking the **max** in
+each 2x2 window (**max pooling**; **average pooling** takes the mean). Pooling has **no weights**; it
+just shrinks the height and width (**subsampling**), which cuts compute and memory and adds a little
+more translation invariance (the exact position of a feature matters less). A common block is
+therefore `Conv -> ReLU -> Pool`, repeated to build depth while shrinking the spatial size.
+
+## A CNN, End to End
+
+Stack a couple of `Conv -> ReLU -> Pool` blocks to extract a feature hierarchy, then `Flatten` the
+final feature maps and finish with one or two **dense** layers ending in **logits** -- the exact same
+output as L15, paired with `CrossEntropyLoss`. The filters are not designed by hand; they are
+**learned by backprop** (L16), and the whole net trains with the same loop (L15) and tricks (L17).
+The only new bookkeeping is the **spatial trace** -- watch the size shrink so you know the flattened
+dimension:
+
+```{mermaid}
+flowchart LR
+  inp["input<br/>1 x 28 x 28"] --> c1["Conv 3x3 x32<br/>+ ReLU"]
+  c1 --> p1["MaxPool 2<br/>32 x 14 x 14"]
+  p1 --> c2["Conv 3x3 x64<br/>+ ReLU"]
+  c2 --> p2["MaxPool 2<br/>64 x 7 x 7"]
+  p2 --> fl["Flatten<br/>3136"]
+  fl --> d1["Dense 128<br/>+ ReLU"]
+  d1 --> out["Dense 10<br/>logits"]
+```
+
+The lab builds exactly this network. Its two convolutional layers hold only **320** and **18,496**
+weights -- a few hundred to a few thousand, because the filters are shared -- while the dense head
+holds most of the rest. Trained on Fashion-MNIST it reaches **0.889** test accuracy, beating the
+L15-style MLP's **0.860** on the same images: the CNN wins because convolution and pooling exploit the
+2-D structure and translation invariance an MLP throws away.
+
+## Common Pitfalls
+
+- **Flattening too early.** Flatten only *after* the convolutional layers have extracted spatial
+  features; flatten the raw image and you are back to an MLP.
+- **Forgetting the tensor layout.** PyTorch images are **NCHW** (batch, channels, height, width); a
+  `Conv2d` expects a 4-D tensor, not a flat vector.
+- **The wrong flattened dimension.** The first dense layer's input size must match the flattened
+  feature maps (here 64 x 7 x 7 = 3136). Trace the spatial size, or let `nn.LazyLinear` infer it.
+- **Thinking pooling "learns."** Pooling has **no weights** -- it only subsamples. All the learning is
+  in the convolutional and dense layers.
+- **Expecting a CNN to need *more* data than an MLP.** Parameter sharing means it needs *less* per
+  pattern -- it sees the same pattern everywhere with one filter.
+
+## FAQ / Industry Reality
+
+**"Why does a CNN beat an MLP on images?"** -- Two reasons: it keeps the 2-D structure (neighboring
+pixels stay neighbors), and parameter sharing lets one filter detect a pattern anywhere, so it
+generalizes from far less data than a dense net that must relearn every position.
+
+**"How big should a filter be?"** -- Small (3x3 is the modern default); stacking several small filters
+sees a large region while using fewer weights than one big filter. The lab uses 3x3.
+
+**"Conv or pooling for downsampling?"** -- Pooling is the classic way (cheap, no parameters); many
+modern nets instead use a strided convolution. Either shrinks the spatial size; the lab uses max
+pooling for clarity.
+
+**"Where do real architectures go from here?"** -- Deeper stacks with clever wiring -- residual
+connections (ResNet), inception blocks -- and **transfer learning** from models pretrained on millions
+of images. That is L19. Training those at scale (GPU, augmentation) is the CDAT 4013 lab's territory.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---|---|
+| Convolutional layer | slide a small filter over local receptive fields; weights shared across positions |
+| Filter / kernel | the small learnable weight matrix; one filter = one pattern detector |
+| Feature map | a filter's output: where in the image that pattern fires |
+| Stride / padding | step size of the filter / zero-border to control output size |
+| Parameter sharing | one filter reused everywhere -> few weights + translation invariance |
+| Channels / stacking | input depth (1 gray, 3 RGB); many filters -> many feature maps |
+| Pooling | subsample each feature map (max common); no weights; shrinks H and W |
+| Feature hierarchy | stacked conv layers: edges -> parts -> objects |
+| The recipe | `Conv -> ReLU -> Pool` blocks, then `Flatten -> Dense -> logits` |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 14 -- convolutional layers, pooling, and CNN
+  architectures, with the receptive-field arithmetic in full.
+- **Docs:** [PyTorch `nn.Conv2d`](https://pytorch.org/docs/stable/generated/torch.nn.Conv2d.html) and
+  [`nn.MaxPool2d`](https://pytorch.org/docs/stable/generated/torch.nn.MaxPool2d.html) -- the exact
+  layers the lab uses, with their shape formulas.
+- **Foundational:** LeCun et al. (1998), *Gradient-Based Learning Applied to Document Recognition* --
+  LeNet-5, the CNN that started it; and the Stanford CS231n convolutional-networks notes.

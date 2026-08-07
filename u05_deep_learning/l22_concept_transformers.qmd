@@ -1,0 +1,197 @@
+---
+title: "The Transformer Architecture"
+unit: "V"
+lesson: "22"
+type: concept
+tags: [deep-learning, pytorch, transformer, multi-head-attention, positional-encoding, layer-norm, llm]
+difficulty: intermediate
+duration: "90 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** **multi-head attention** -- several attention heads in parallel, each with its own
+  projections, concatenated -- and say why several heads beat one. *(Understand)*
+- **Explain** **positional encoding**: why an order-blind set operation needs it, and how a sinusoidal
+  or learned position signal injects order. *(Understand)*
+- **Build** the **Transformer encoder block** (multi-head self-attention, Add & Norm, a position-wise
+  feed-forward network) and stack blocks into a working encoder. *(Apply -- in the lab)*
+- **Analyze** why the Transformer is attention **plus** position **plus** residual/layer-norm blocks:
+  positional encoding flips an order task from chance to solved. *(Analyze)*
+- **Relate** the block to the full encoder/decoder architecture, causal masking, and the **BERT** /
+  **GPT** language-model families. *(Understand)*
+
+> **Where this sits:** after `L21 — Attention Mechanisms`, which built one attention layer and found it
+> **order-blind**. This lesson adds the few parts that turn that one operation into the **Transformer**
+> -- the architecture behind essentially every large language model. It **closes Unit V** (Deep
+> Learning); next: `L23 — K-Means Clustering & Similarity` opens Unit VI.
+>
+> **Hands-on:** [Lab — Build a Transformer](l22_lab_transformers.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u05_deep_learning/l22_lab_transformers.ipynb)
+
+## Why This Matters
+
+L21 ended on a cliffhanger. A single attention layer can reach any position in one hop -- a huge win
+for long-range dependencies -- but it is **order-blind**: shuffle the input tokens and the output is
+identical, because attention treats its input as a **set**. For a lookup that is fine; for language it
+is fatal, since "dog bites man" and "man bites dog" would look the same.
+
+Everything else about a Transformer is engineering around the attention you already built. Run several
+attention computations in parallel (**multi-head**). Wrap each sublayer in a residual connection and a
+normalization step so deep stacks stay trainable. Add a small per-position network for extra
+nonlinearity. And -- the one genuinely new idea -- tell the set-based layer **where each token sits**
+with **positional encoding**. Assemble those, stack the result a few times, and you have the
+architecture introduced in *Attention Is All You Need* (2017) that now powers BERT, GPT, and modern
+large language models.
+
+## Multi-Head Attention
+
+One attention computation produces one weighted blend per position -- it can track **one** kind of
+relationship at a time. A sentence has many at once: agreement with the subject, the referent of a
+pronoun, the boundary of a clause. **Multi-head attention** runs several attentions in **parallel**.
+Split the width $d$ into $h$ **heads** of size $d/h$; give each head its own $W_q, W_k, W_v$; run
+scaled dot-product attention independently in each; concatenate the $h$ outputs back to width $d$ and
+mix them with a final $W_o$:
+
+$$\text{MultiHead}(X) = \operatorname{concat}(\text{head}_1, \ldots, \text{head}_h)\, W_o, \qquad
+\text{head}_i = \text{attention}(X W_q^i, X W_k^i, X W_v^i)$$
+
+Because the heads are independent, they can **specialize** -- one head learns to look at the previous
+token, another at a distant noun, another at punctuation. It costs almost nothing: $h$ heads over
+$d/h$ dimensions is the same total work as one head over $d$. In the lab you build this from L21's
+`attention` and see four heads attend differently to the same token; PyTorch ships it as
+`nn.MultiheadAttention`.
+
+## Positional Encoding
+
+Attention has no built-in sense of order -- the sum over positions is the same in any arrangement. To
+fix that, **add a position signal to each token embedding** before the first block, so position becomes
+part of the representation. The original Transformer uses a fixed **sinusoidal** encoding: dimension by
+dimension, the value is a sine or cosine of the position at a geometrically decreasing frequency,
+
+$$PE_{(p,\,2i)} = \sin\!\left(\frac{p}{10000^{\,2i/d}}\right), \qquad
+PE_{(p,\,2i+1)} = \cos\!\left(\frac{p}{10000^{\,2i/d}}\right)$$
+
+so fast dimensions separate neighbors and slow dimensions separate far-apart positions; together they
+give every position a unique fingerprint. Modern models usually **learn** the signal instead -- a
+trainable `nn.Embedding(max_len, d)` indexed by position -- which works just as well. Either way, the
+point is the same: no amount of depth recovers order from a set, so position must be **injected**. This
+is exactly the missing ingredient L21 named.
+
+## The Transformer Block (Add & Norm)
+
+A Transformer is a stack of identical **blocks**. Each block has two **sublayers** -- multi-head
+self-attention (mix information *between* positions) and a **position-wise feed-forward network** (a
+small MLP applied to each position independently, for per-token nonlinearity) -- and wraps each one the
+same way: a **residual connection** then **layer normalization**, the "Add & Norm" pattern.
+
+$$x \leftarrow \text{LayerNorm}\big(x + \text{MultiHeadSelfAttention}(x)\big), \qquad
+x \leftarrow \text{LayerNorm}\big(x + \text{FFN}(x)\big)$$
+
+The **residual** connection is the L19 idea: add the input back, so each sublayer only learns a
+*change* and gradients have a short path -- which is what lets blocks stack deep. **Layer
+normalization** is new here, and worth contrasting with L17's batch-norm: layer-norm standardizes each
+**token across its own features**, independent of the batch, which suits variable-length sequences far
+better than batch statistics. A block maps a sequence to a same-shape sequence, so blocks stack
+cleanly; `nn.TransformerEncoderLayer` is exactly this.
+
+```{mermaid}
+flowchart TB
+  x["input tokens<br/>(embedding + positional encoding)"] --> a["multi-head self-attention"]
+  x -- "residual" --> n1["Add and Norm"]
+  a --> n1
+  n1 --> f["feed-forward network<br/>(position-wise MLP)"]
+  n1 -- "residual" --> n2["Add and Norm"]
+  f --> n2
+  n2 --> out["block output<br/>(same shape, stack again)"]
+```
+
+## Stacking into the Architecture
+
+Stack $N$ of these blocks and you have a Transformer **encoder**: every position has gathered context
+from the whole sequence, repeatedly refined. Two structural variations cover most of what you will
+meet:
+
+- A **decoder** generates a sequence left to right. Its self-attention is **masked** so a position can
+  only attend to itself and earlier positions (no peeking at the future); it can also add
+  **cross-attention** to look at an encoder's output.
+- An **encoder-decoder** pairs the two -- the encoder reads the input (say, a French sentence), the
+  decoder writes the output (the English translation) while attending to the encoder. This is the
+  original 2017 design.
+
+The whole architecture is the same block, repeated and arranged. What changes between models is mostly
+**which mask** and **which half** you keep.
+
+## Causal Masking and LLMs
+
+The mask is the single structural difference between the two dominant model families. Add $-\infty$ to
+every attention score above the diagonal and the softmax zeroes out the future, giving **causal**
+(left-to-right) attention -- the lab does this in one line and sees a clean lower-triangular matrix.
+
+- **BERT** is **encoder-only** with **no** mask: every token sees every other (bidirectional). Good
+  for *understanding* a whole input at once -- classification, retrieval, tagging.
+- **GPT** is **decoder-only** with a **causal** mask: each token sees only the past. Good for
+  *generating* text one token at a time -- which is what chat models do.
+
+```{mermaid}
+flowchart TB
+  blk["the Transformer block<br/>(multi-head attention + Add and Norm + FFN)"] --> bert["BERT<br/>encoder-only, NO mask<br/>bidirectional -- understanding"]
+  blk --> gpt["GPT<br/>decoder-only, CAUSAL mask<br/>left-to-right -- generation"]
+  bert --> u1["classification,<br/>retrieval, tagging"]
+  gpt --> u2["text generation,<br/>chat, code"]
+```
+
+## Common Pitfalls
+
+- **Thinking positional encoding is optional.** Without it the model is order-blind -- in the lab it
+  sits at chance on a task that depends only on order. For language, position is not negotiable.
+- **Confusing layer-norm with batch-norm.** Layer-norm normalizes each token across its features
+  (batch-size independent); batch-norm (L17) normalizes across the batch. Transformers use layer-norm.
+- **Thinking one block is the whole model.** A block is the repeating unit; a Transformer stacks
+  several, with an embedding + positional encoding in front and a task head on top.
+- **Confusing "multi-head" with "deeper."** Heads are **parallel** (wider attention, same depth), not
+  extra layers. Depth comes from stacking blocks.
+- **Assuming an encoder and a decoder are different layers.** They are the same block; the decoder just
+  adds a causal mask (and optionally cross-attention).
+
+## FAQ / Industry Reality
+
+**"Is this really what GPT and BERT are?"** -- Yes, at the core. Real models are bigger (more blocks,
+wider $d$, more heads), trained on enormous text with a tokenizer in front, and tuned heavily -- but
+the block you build here is the repeating unit in all of them. The differences are scale and the mask,
+not the mechanism.
+
+**"Why feed-forward *and* attention?"** -- They do different jobs. Attention **mixes** information
+across positions; the FFN **transforms** each position on its own. Alternating them -- mix, transform,
+mix, transform -- is what gives the stack its expressive power.
+
+**"How big do these get?"** -- The block is cheap, but attention's cost grows with the **square** of
+the sequence length (L21), and models stack dozens to hundreds of blocks over thousands of dimensions.
+That is why training frontier models takes data centers, and why long context is expensive.
+
+**"Do Transformers only do language?"** -- No. The same architecture handles vision (Vision
+Transformers split an image into patches and treat them as tokens), audio, protein sequences, and more.
+Anything you can present as a sequence of tokens is fair game.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---|---|
+| Multi-head attention | `h` attentions in parallel over `d/h`-wide slices, concatenated -- heads specialize |
+| Positional encoding | a per-position signal (sinusoidal or learned) added to embeddings -- gives order to a set |
+| Residual + layer norm | "Add & Norm": add the input back (short gradient path) then normalize per token |
+| Feed-forward network | a position-wise MLP -- transforms each token independently |
+| Encoder block | self-attention + Add&Norm + FFN + Add&Norm; stack `N` of them |
+| Decoder / causal mask | `-inf` above the diagonal -> left-to-right attention (generation) |
+| BERT vs GPT | encoder-only/bidirectional (understanding) vs decoder-only/causal (generation) |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 16 -- the full Transformer (multi-head,
+  positional encoding, encoder/decoder) with worked code.
+- **Foundational:** Vaswani et al. (2017), *Attention Is All You Need* -- the paper; now that you have
+  built the block, it reads as a description of what you made.
+- **Visual:** Jay Alammar, *The Illustrated Transformer* -- a picture-by-picture walk through exactly
+  this architecture, from one head up to the full stack.

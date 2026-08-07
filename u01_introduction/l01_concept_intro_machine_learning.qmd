@@ -1,0 +1,231 @@
+---
+title: "What Is Machine Learning?"
+unit: "I"
+lesson: "01"
+type: concept
+tags: [machine-learning, paradigms, workflow, foundations]
+difficulty: introductory
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Define** machine learning (Mitchell's E/T/P formulation) and **contrast** it with explicitly-programmed software. *(Understand)*
+- **Classify** real problems by learning paradigm — supervised, unsupervised, or reinforcement learning. *(Analyze)*
+- **Map** the mathematical foundations — calculus, linear algebra, statistics — to the role each plays in machine learning. *(Understand)*
+- **Describe** the machine learning workflow and **locate** where modeling sits within it. *(Understand)*
+
+> **Where this sits:** first lesson of the course · next: **The ML Toolkit & First Model**
+> (L02), where you set up the tools and train your first classifier.
+
+## Why This Matters
+
+Biodiversity researchers in Puerto Rico monitor frog populations from thousands of hours
+of nighttime field recordings. Telling *Eleutherodactylus coqui* from its mountain cousin
+*E. portoricensis* by their calls is easy for a trained ear — and nearly impossible to
+write down as `if` rules. What threshold? On which measurement? With how much tolerance?
+
+When you cannot write the rules but you *can* collect labeled examples, you are standing
+in machine learning's territory: **let the computer find the rules in the data**.
+
+::: {.callout-tip title="Analogy"}
+You don't teach a child to recognize a mango by handing them a specification ("oblong,
+9-15 cm, skin blending green to red..."). You point at mangoes until they get it. Machine
+learning is teaching software by pointing at examples.
+:::
+
+## What Is Machine Learning?
+
+The plain-language version first:
+
+> Machine learning is the science (and art) of programming computers so they can
+> **learn from data**.
+
+Two classic definitions sharpen it:
+
+- *"The field of study that gives computers the ability to learn without being
+  explicitly programmed."* — Arthur Samuel, 1959.
+- *"A computer program is said to **learn** from experience **E** with respect to some
+  task **T** and some performance measure **P**, if its performance on T, as measured
+  by P, improves with experience E."* — Tom Mitchell, 1997.
+
+Mitchell's E/T/P version is the one to retain, because it is *checkable*. For the coquí
+detector: **T** = label a recording by species, **P** = fraction labeled correctly,
+**E** = a set of recordings already labeled by a biologist. If more recordings make the
+labels more accurate, the program is learning.
+
+The contrast with traditional programming is the whole point:
+
+```{mermaid}
+flowchart LR
+  subgraph T["Traditional programming"]
+    R["Rules (written by you)"] --> P1["Program"]
+    D1["Data"] --> P1
+    P1 --> A1["Answers"]
+  end
+  subgraph M["Machine learning"]
+    D2["Data"] --> L["Learning algorithm"]
+    A2["Answers (labels)"] --> L
+    L --> R2["Rules (the model)"]
+  end
+```
+
+In traditional programming you supply the rules and the data, and the program produces
+answers. In machine learning you supply the data *and the answers*, and the algorithm
+produces the rules — an artifact we call **the model**. The examples the algorithm
+learns from are the **training set**; each example is described by **features**
+(measurable properties, like a call's pitch) and, when present, a **label** (the answer,
+like the species).
+
+## The Three Learning Paradigms
+
+This course is organized around what kind of feedback the data gives the learner:
+
+| Paradigm | The training data is... | Canonical tasks | Example | In this course |
+|----------|----------------------|-----------------|---------|----------------|
+| **Supervised learning** | labeled — every example carries the desired answer | classification, regression | species from call features; house price from size | Units II-V |
+| **Unsupervised learning** | unlabeled — structure must be found, not matched | clustering, dimensionality reduction | grouping customers by behavior | Units VI-VII |
+| **Reinforcement learning** | not a fixed dataset — an *agent* acts and receives rewards | sequential decision making, control | a bot learning a game | Unit VIII (paradigm here; hands-on in the CDAT 4013 lab) |
+
+Two distinctions do most of the classification work for you: **does each example carry
+the desired answer** (supervised vs unsupervised), and **does the system act and get
+feedback over time** (reinforcement learning).
+
+You will also hear of *semi-supervised*, *self-supervised*, and *transfer* learning —
+important variants in modern practice (they deal with the scarcity of labels), but out
+of this course's scope; we name them so the terms aren't strangers.
+
+## Mathematical Foundations
+
+The syllabus lists calculus, linear algebra, and statistics as Unit I concepts. You do
+not need to master them up front — you need to know **what each one buys you**, and
+trust that each unit introduces what it uses:
+
+| Area | What it gives machine learning | Where you'll first feel it |
+|------|-------------------------------|----------------------------|
+| **Linear algebra** | data as vectors and matrices; models as transformations of them | everywhere from Unit II — a dataset *is* a matrix (rows = examples, columns = features) |
+| **Calculus** | optimization — following gradients downhill to make a model's error smaller | linear and logistic regression (Unit II); backpropagation (Unit V) |
+| **Statistics** | uncertainty — distributions, estimation, and honest evaluation | Naive Bayes and discriminant analysis (Unit II); evaluation metrics (Unit III) |
+
+## The Machine Learning Workflow
+
+Real projects are a loop, not a single call to a magic function. The end-to-end shape
+(adapted from Géron's project checklist) recurs in every unit and in your final project:
+
+```{mermaid}
+flowchart LR
+  F["1 Frame<br/>the problem"] --> G["2 Get<br/>the data"]
+  G --> X["3 Explore"]
+  X --> P["4 Prepare"]
+  P --> M["5 Model"]
+  M --> V["6 Evaluate"]
+  V --> D["7 Deploy<br/>and monitor"]
+  D -.->|"models rot as data drifts"| F
+```
+
+Notice where the modeling step sits: it is **one box of seven**. Most working hours go
+to framing, data, and evaluation — and the loop closes because deployed models degrade
+as the world changes.
+
+| Workflow stage | Where this course develops it |
+|----------------|-------------------------------|
+| Frame, get, explore, prepare | developed in the labs, as the course needs it |
+| Model | Units II (classic), IV (ensembles), V (deep learning), VI-VII (unsupervised) |
+| Evaluate | Unit III (the theory of doing this honestly) |
+| Deploy and monitor | discussed, not implemented (out of scope) |
+
+## Anchor: Which Paradigm Is It?
+
+The decision procedure in action — five real scenarios, classified:
+
+| Scenario | Labeled answers available? | Acting + rewards? | Verdict |
+|----------|---------------------------|-------------------|---------|
+| Detect tumors in brain scans, given scans marked by radiologists | yes — the marks | no | supervised (classification) |
+| Forecast next year's revenue from past performance metrics | yes — past revenues | no | supervised (regression) |
+| Segment customers by purchase behavior, no predefined groups | no | no | unsupervised (clustering) |
+| Draw a readable 2-D map of a 300-feature dataset | no | no | unsupervised (dimensionality reduction) |
+| Teach a bot to win a game by playing it | not as a dataset | yes — win/lose | reinforcement learning |
+
+Read each verdict back through the two distinctions: labels present? agent acting? That
+is the entire skill — and quiz material.
+
+## Discussion
+
+Classify each scenario by paradigm (and task, where it applies). Think alone, then
+compare with a neighbor, then we resolve together:
+
+1. Flag fraudulent credit-card transactions, given last year's transactions marked
+   fraud / legitimate by investigators.
+2. Group the noise sources in Humacao nighttime recordings — coquí, insects, traffic,
+   rain — *without* any labeled archive to start from.
+3. Tune the timing of traffic lights around the UPR-Humacao entrance to minimize
+   average wait, learning from measured delays after each adjustment.
+
+One of these is genuinely arguable — be ready to defend which, and why.
+
+## Deep Dive: Sixty Years in Six Paragraphs (Optional)
+
+::: {.callout-note collapse="true" title="A brief history of machine learning"}
+
+**1950s-60s.** Turing asks whether machines can learn from experience; Samuel's
+checkers player improves by playing itself; the perceptron is built as *hardware* to
+recognize simple patterns — neural networks are born early.
+
+**1970s-80s.** AI bets on rule-based *expert systems* — human knowledge hand-coded as
+rules. They struggle to scale and generalize (the lesson that motivates this whole
+course). Backpropagation, popularized in 1986, revives multi-layer neural networks.
+
+**1990s.** Support vector machines and decision trees outperform the era's neural
+networks, which suffer from vanishing gradients and overfitting.
+
+**2000s.** The web makes data abundant, and data — not just algorithms — becomes the
+key ingredient. Spam filters (Naive Bayes) become ML's first ubiquitous commercial win.
+
+**2010s.** Computational power plus training breakthroughs ignite deep learning:
+convolutional networks transform vision, recurrent networks transform speech; AlphaGo
+(2016) marries deep learning with reinforcement learning to beat the world Go champion.
+
+**2018 onward.** Transformer architectures revolutionize language processing, leading
+to today's conversational systems — built on the same supervised / self-supervised /
+reinforcement foundations this course teaches.
+
+:::
+
+## FAQ / Industry Reality
+
+**"Are AI, machine learning, and deep learning the same thing?"** — Nested, not equal.
+AI is the broad goal (machines doing tasks that need intelligence), machine learning is
+the data-driven approach to it, and deep learning is the neural-network branch of
+machine learning (Unit V). Most of what makes headlines as "AI" today is ML.
+
+**"Is ML always better than hand-written rules?"** — No. When the logic is known,
+simple, and must be auditable (tax brackets, eligibility rules), write the rules. ML
+earns its complexity when rules are unknown, fuzzy, or drift over time — and it costs
+you data collection, evaluation discipline, and maintenance (the workflow loop above).
+
+**"Do I need to master all that math before I can start?"** — No. The foundations table
+is a map, not a gate: your statistics prerequisite plus programming experience are enough
+to begin, and each unit introduces the math it actually uses, when it uses it.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Machine learning | programs that improve at a task with experience (data) |
+| Model | the rules the algorithm learned; features in, prediction out |
+| Training set | the labeled (or unlabeled) examples learned from |
+| Supervised | data carries the answers; classify or regress |
+| Unsupervised | no answers; find structure (clusters, low-dim maps) |
+| Reinforcement | an agent learns a policy from rewards |
+| Workflow | frame · data · explore · prepare · model · evaluate · deploy — a loop |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 1 — this lesson in long form
+  (read it with the lab open).
+- **Docs:** [scikit-learn's "Getting Started"](https://scikit-learn.org/stable/getting_started.html)
+  — the `fit` / `predict` vocabulary you'll use in every lab.
+- **Article:** Domingos, ["A Few Useful Things to Know About Machine Learning"](https://homes.cs.washington.edu/~pedrod/papers/cacm12.pdf)
+  (CACM 2012) — twelve hard-won lessons, readable now and worth rereading after Unit III.

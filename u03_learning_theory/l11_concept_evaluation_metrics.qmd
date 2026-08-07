@@ -1,0 +1,212 @@
+---
+title: "Evaluation Metrics"
+unit: "III"
+lesson: "11"
+type: concept
+tags: [metrics, confusion-matrix, precision-recall, roc-auc, imbalanced]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Explain** why accuracy misleads on imbalanced data, and read a confusion
+  matrix (true/false positives and negatives). *(Understand)*
+- **Compute and interpret** precision, recall, and F1, and choose the metric that
+  matches the cost of a false positive versus a false negative. *(Understand /
+  Analyze)*
+- **Explain** the precision-recall threshold trade-off and ROC-AUC as a
+  threshold-independent summary. *(Understand / Analyze)*
+- **Apply** these metrics to a classifier, read the threshold trade-off, and
+  compute the core regression metrics. *(Apply / Analyze — in the lab)*
+
+> **Where this sits:** after `L10 — Regularization & Model/Feature Selection`, this
+> lesson **closes Unit III** by answering the question every model quietly raised —
+> *how do you actually score it?* · next: `L12 — Decision Trees & Bagging` (Unit IV).
+>
+> **Hands-on:** [Lab — When Accuracy Lies](l11_lab_evaluation_metrics.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u03_learning_theory/l11_lab_evaluation_metrics.ipynb)
+
+## Why This Matters
+
+Every lesson so far reported one number — accuracy for classifiers, R-squared for
+regressions — and moved on. That single number can hide a model that is quietly
+useless.
+
+Imagine screening for a disease that afflicts 9% of a population. A "model" that
+declares *everyone healthy* is correct 91% of the time. 91% accuracy — and it
+catches **zero** sick patients. The accuracy is real and the model is worthless,
+because accuracy rewards the majority class and says nothing about the errors that
+cost the most. This lesson builds the metrics that tell the truth — and the paired
+lab puts them to work on a real screen, spotting a rare disease in coqui frogs.
+
+::: {.callout-tip title="Analogy"}
+A smoke detector that **never goes off** is right almost every day — fires are rare.
+But "right almost every day" is exactly the wrong thing to measure; you want to know
+*did it catch the fire?* (recall) and *when it shrieked, was there really a fire?*
+(precision). Accuracy is the useless daily score; precision and recall are the two
+questions that actually matter.
+:::
+
+## The Confusion Matrix
+
+Every classification metric is computed from one small table that cross-tabulates
+what the model said against the truth. For a positive class (say, "sick"):
+
+| | Predicted positive | Predicted negative |
+|--|--------------------|--------------------|
+| **Actually positive** | True Positive (TP) | False Negative (FN) — a *miss* |
+| **Actually negative** | False Positive (FP) — a *false alarm* | True Negative (TN) |
+
+The two diagonal cells are correct; the two off-diagonal cells are the two *kinds*
+of error, and they usually cost very different amounts. Accuracy collapses all four
+into one ratio, $\frac{TP+TN}{\text{all}}$, which is why it can look high while the
+FN cell — the misses — quietly fills up.
+
+## Precision and Recall
+
+Two ratios read straight off the matrix, each answering one of the smoke-detector
+questions:
+
+$$\text{Precision} = \frac{TP}{TP + FP} \qquad \text{Recall} = \frac{TP}{TP + FN}$$
+
+- **Precision** — of everything the model *flagged positive*, what fraction really
+  was? It punishes **false alarms**. Maximize it when a false positive is expensive:
+  a spam filter that dumps a real email, a fraud block on a legitimate card.
+- **Recall** (also *sensitivity* or *true positive rate*) — of all the *actual
+  positives*, what fraction did the model *catch*? It punishes **misses**. Maximize
+  it when a false negative is dangerous: a disease screen, a fault detector.
+
+They pull against each other: flag more aggressively and you catch more positives
+(recall up) but raise false alarms (precision down). The **F1-score** packages the
+trade into one number — the *harmonic* mean, which stays low unless *both* are
+decent:
+
+$$F_1 = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}$$
+
+In the lab, a logistic model scores **accuracy 0.943** on the disease screen — yet
+its **recall is only 0.346**: it misses two-thirds of the sick. Accuracy hid that;
+recall exposed it.
+
+## The Threshold Is a Dial
+
+A classifier like logistic regression does not emit a label — it emits a
+*probability* (`predict_proba`, from L04). The 0.5 cutoff that turns that score into
+a label is just a **default**, and you are free to move it. Lower the threshold and
+the model flags more cases: recall rises, precision falls. Raise it and the reverse.
+The threshold is an **operating point** you choose for the cost structure — there is
+no universally right value.
+
+```{mermaid}
+flowchart TD
+  Q["Scoring a classifier"] --> B{"Balanced classes,<br/>FP and FN equally costly?"}
+  B -->|yes| ACC["Accuracy is fine"]
+  B -->|no| C{"Which error hurts more?"}
+  C -->|"a miss (FN)"| REC["Lower the threshold;<br/>watch recall and F1"]
+  C -->|"a false alarm (FP)"| PRE["Raise the threshold;<br/>watch precision"]
+  C -->|"want one threshold-free score"| AUCN["Report ROC-AUC"]
+```
+
+## ROC and AUC
+
+If the threshold is a dial, why report just one operating point? The **ROC curve**
+sweeps *every* threshold and plots the **true positive rate** (recall) against the
+**false positive rate**, $FPR = \frac{FP}{FP + TN}$ — the fraction of healthy
+patients wrongly flagged. A model that ranks positives above negatives hugs the
+top-left corner; a coin-flip rides the diagonal.
+
+The **AUC** (Area Under the Curve) collapses that whole curve into one number:
+
+- **AUC = 1.0** — perfect ranking; **0.5** — no better than chance.
+- It is **threshold-independent** — it measures whether the model's *scores*
+  separate the classes, before you commit to any cutoff. The lab's model scores
+  AUC **0.889**.
+
+AUC is the right summary when you want a single threshold-free comparison — but on
+*heavily* imbalanced data it can look flatteringly high (the huge TN count keeps FPR
+small), so precision-recall curves are the honest companion (named, not drilled
+here).
+
+## Regression Metrics
+
+Regression has no confusion matrix; you measure how far predictions miss:
+
+| Metric | Formula idea | Reads as |
+|--------|--------------|----------|
+| **MSE** | mean of squared errors | average squared miss; punishes big errors hard (L03's loss) |
+| **RMSE** | square root of MSE | same **units as the target** — the headline error size |
+| **MAE** | mean of absolute errors | typical miss; robust to outliers |
+| **R-squared** | 1 - (model error / baseline error) | share of variance explained; 1.0 perfect, 0 = predict-the-mean (L03) |
+
+RMSE is the usual headline (interpretable units); MAE when outliers shouldn't
+dominate; R-squared for a unit-free "how much better than the mean" (the baseline
+from L03).
+
+## Common Pitfalls
+
+- **Quoting accuracy on imbalanced data.** The headline sin of this lesson — the lab
+  runs the all-healthy baseline at 0.913 to make it concrete.
+- **Reporting precision without recall (or vice versa).** Either alone is gameable:
+  flag nothing for perfect-looking precision; flag everything for perfect recall.
+  Report the pair, or F1.
+- **Reading metrics on the training set.** Metrics are a held-out measurement (L09);
+  training-set precision/recall flatter exactly like training accuracy did.
+- **Trusting AUC blindly under heavy imbalance.** A high AUC can still hide poor
+  precision at every usable threshold — check the operating point you will actually
+  ship.
+
+::: {.callout-note title="Deep Dive: why F1 is a harmonic mean (Optional)" collapse="true"}
+
+The harmonic mean of precision $p$ and recall $r$ is $2pr/(p+r)$. Unlike the
+ordinary average, it is dragged toward the *smaller* of the two: a model with
+precision 1.0 and recall 0.02 has arithmetic mean 0.51 but F1 $\approx 0.039$ — the
+harmonic mean refuses to be fooled by one strong number when the other is near zero.
+That is exactly the behavior you want from a single "are *both* decent?" score. The
+**F-beta** generalization, $F_\beta = (1+\beta^2)\frac{pr}{\beta^2 p + r}$, tilts the
+balance: $\beta > 1$ weights recall more (use when misses are costlier), $\beta < 1$
+weights precision more.
+:::
+
+## FAQ / Industry Reality
+
+**"Which single metric should I report?"** — Name the costs first. If a miss is
+worse than a false alarm (disease, fraud, faults), lead with recall (or F-beta with
+beta > 1); if a false alarm is worse (spam, blocking good transactions), lead with
+precision; if you must compare models before fixing a threshold, report AUC; if
+classes are balanced and the two errors cost the same, accuracy is genuinely fine.
+
+**"So accuracy is useless?"** — No — it is the right metric for *balanced* problems
+with *symmetric* costs (the coqui calls from earlier lessons were roughly balanced,
+so accuracy served honestly there). It only lies when the classes are skewed or the
+errors cost differently — which, in the real world, is most of the time.
+
+**"My data is 99% negative and AUC is 0.95 — am I done?"** — Be careful. AUC can stay
+high while precision at every usable threshold is poor, because the enormous TN count
+keeps FPR tiny. Look at precision and recall at the threshold you would actually
+deploy, and consider a precision-recall curve.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Accuracy trap | high accuracy can hide a useless model on imbalanced data |
+| Confusion matrix | TP / FP / FN / TN — every classification metric starts here |
+| Precision | TP/(TP+FP); of those flagged, how many right; punishes false alarms |
+| Recall | TP/(TP+FN); of actual positives, how many caught; punishes misses |
+| F1 | harmonic mean of precision and recall; both must be decent |
+| Threshold | the dial that trades recall for precision (an operating point) |
+| ROC-AUC | TPR vs FPR across thresholds; 1.0 perfect, 0.5 chance; threshold-free |
+| Regression | RMSE (units of target), MAE (outlier-robust), R-squared (vs mean) |
+| Pick by cost | choose the metric that matches the cost of FP vs FN |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 3 — the classification
+  chapter that walks confusion matrices, precision/recall, the threshold trade-off,
+  and ROC end to end.
+- **Docs:** [scikit-learn's metrics and scoring guide](https://scikit-learn.org/stable/modules/model_evaluation.html)
+  — every metric here plus the precision-recall curve and multi-class averaging.
+- **Text, deeper:** James et al., *An Introduction to Statistical Learning*, ch. 4 —
+  the confusion matrix and ROC in the context of classification thresholds.

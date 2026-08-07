@@ -1,0 +1,235 @@
+---
+title: "Decision Trees & Bagging"
+unit: "IV"
+lesson: "12"
+type: concept
+tags: [decision-trees, cart, gini, bagging, random-forest, feature-importance]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Explain** how a decision tree splits the data (Gini impurity or entropy,
+  greedy recursion) and read a fitted tree. *(Understand)*
+- **Diagnose** why an unpruned tree overfits, and **use** `max_depth` as the
+  flexibility dial. *(Analyze / Apply)*
+- **Explain** bagging as variance reduction by averaging many bootstrap-trained
+  trees. *(Understand)*
+- **Apply** a random forest, read its feature importances, and compare it to a
+  single tree. *(Apply / Analyze — in the lab)*
+
+> **Where this sits:** after `L11 — Evaluation Metrics` (which closed Unit III),
+> this lesson **opens Unit IV — Ensembles** by turning Unit III's theory into a
+> practical win: the high-variance decision tree, cured by averaging. · next:
+> `L13 — Boosting` (the bias-cutting half of the unit).
+>
+> **Hands-on:** [Lab — A Forest of Coqui Trees](l12_lab_trees_bagging.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u04_ensembles/l12_lab_trees_bagging.ipynb)
+
+## Why This Matters
+
+Every model so far has been, in some sense, a single equation — a line, a sigmoid, a
+margin, a Gaussian. A **decision tree** is different: it is a flowchart of yes/no
+questions, the one model in this course a field biologist could read aloud and follow
+by hand. That readability is its charm.
+
+It is also its trap. Let a tree grow until every leaf is pure and it will memorize the
+training set *perfectly* — train accuracy 1.000 — and then stumble on new data (test
+0.717 in the lab). This is the **high-variance** learner L09 described, made concrete:
+exquisitely sensitive to the exact sample it saw. The cure that opens this unit is
+almost too simple to believe: grow *many* trees on shuffled copies of the data and let
+them **vote**. That single idea — the **ensemble** — lifts test accuracy by ten points
+and underlies the random forest, still the default first model for tabular data.
+
+::: {.callout-tip title="Analogy"}
+Ask one brilliant but opinionated expert to diagnose a frog and you get a confident
+answer that swings wildly with the exact cases they happened to study. Ask a **diverse
+panel** — each trained on a slightly different sample — and take the majority vote, and
+the idiosyncratic errors cancel while the real signal survives. A single deep tree is
+the lone expert; a random forest is the panel.
+:::
+
+## What a Decision Tree Is
+
+A tree breaks a prediction into a sequence of single-feature questions, starting at the
+**root** and walking down to a **leaf** that carries the answer. A toy training set —
+should I study, party, or go to the pub? — makes the shape obvious:
+
+| Deadline? | Party? | Lazy? | Activity |
+|-----------|--------|-------|----------|
+| Urgent | Yes | Yes | Party |
+| Urgent | No | Yes | Study |
+| None | Yes | No | Party |
+| None | No | Yes | Pub |
+
+The learner asks the *most informative* question first ("Is there a party?"), splits the
+rows, and recurses on each branch until the rows in a node share a label. The result is
+a set of if-then rules — transparent in a way no other model in this course is.
+
+The algorithm scikit-learn uses is **CART** (Classification And Regression Trees): it
+builds **binary** splits and works for both classification and regression.
+
+## How a Tree Chooses Its Splits
+
+At each node CART tries every feature and threshold and keeps the split that makes the
+two children as **pure** as possible — as close as it can get to "all one class." Purity
+is measured one of two ways:
+
+| Criterion | Formula | Reads as |
+|-----------|---------|----------|
+| **Gini impurity** (default) | $G = 1 - \sum_k p_k^2$ | chance two random picks from the node disagree; 0 = pure |
+| **Entropy** | $H = -\sum_k p_k \log_2 p_k$ | bits of "surprise" in the node; 0 = pure |
+
+Both are zero for a perfectly pure node and largest for a 50/50 mix. The split chosen is
+the one with the greatest **information gain** — the parent's impurity minus the
+sample-weighted impurity of its children:
+
+$$\text{Gain} = I(\text{parent}) - \sum_{\text{child}} \frac{n_{\text{child}}}{n_{\text{parent}}}\, I(\text{child})$$
+
+The search is **greedy**: it takes the best split *now*, never reconsidering — locally
+optimal, cheap, and good enough in practice. A fitted tree's nodes report exactly this:
+the split test, the impurity, the sample count, and the class distribution (`value`).
+
+## Why a Single Tree Overfits
+
+Nothing stops a tree from asking question after question until every leaf holds a single
+training point. At that depth it has *memorized* the sample — including its noise — and
+its training accuracy hits 1.000. On new data it falls apart, because those deep splits
+described accidents of the training set, not the real pattern. In L09's vocabulary, an
+unbounded tree is **low bias, high variance**: the same algorithm on a slightly different
+sample grows a wildly different tree.
+
+The first dial is `max_depth` — the same kind of **flexibility dial** as kNN's `k` or
+the SVM's `C` and `gamma`. Shallow trees underfit; deep trees overfit; somewhere between
+is a sweet spot. In the lab a full tree scores 1.000/0.717 (train/test), while the best
+depth-limited tree manages only about 0.767 — better, but still not good. Pruning one
+tree only goes so far. The bigger win comes from a different idea entirely.
+
+## Ensembles: the Wisdom of a Diverse Crowd
+
+An **ensemble** combines many predictors and aggregates their answers — typically a
+majority **vote** for classification, an average for regression. The surprising result:
+even if each member is a *weak learner* (barely better than chance), a large, **diverse**
+ensemble can be a strong one, because independent errors cancel in the vote.
+
+The simplest version is a **voting classifier** — train a logistic model, an SVM, and a
+kNN, and let them vote (*hard* voting on labels, or *soft* voting on averaged
+probabilities). Ensembles work best when the members are as **independent** as possible,
+so they make *different* mistakes. That single requirement — diversity — is what the next
+two methods manufacture deliberately.
+
+## Bagging: Averaging Away the Variance
+
+**Bagging** (bootstrap aggregating) builds diversity from *one* algorithm by feeding it
+different data. It draws many **bootstrap samples** — random samples of the training set
+taken *with replacement*, so each is the same size but a different mix — trains one tree
+on each, and aggregates their votes. (Sampling *without* replacement is the variant
+called **pasting**.)
+
+```{mermaid}
+flowchart TD
+  D["Training set (n rows)"] --> B1["Bootstrap sample 1<br/>(sample with replacement)"]
+  D --> B2["Bootstrap sample 2"]
+  D --> Bd["...Bootstrap sample B"]
+  B1 --> T1["Tree 1"]
+  B2 --> T2["Tree 2"]
+  Bd --> Td["Tree B"]
+  T1 --> V["Majority vote"]
+  T2 --> V
+  Td --> V
+  V --> P["Ensemble prediction"]
+```
+
+Why does this help? Each tree is still a high-variance memorizer, but they overfit
+*different* bootstrap samples, so their errors are partly independent. **Averaging
+many noisy-but-unbiased predictors keeps the bias roughly the same while shrinking the
+variance** — exactly the term L09 said a single tree blows up. In the lab, bagging 200
+trees lifts test accuracy from the single tree's 0.717 to **0.811**.
+
+A free bonus: each bootstrap sample leaves out about a third of the rows (the
+**out-of-bag** rows). Scoring each tree on the rows it never saw gives an
+**OOB score** — a validation estimate for free, no separate hold-out needed (0.819 in
+the lab).
+
+## Random Forests
+
+A **random forest** is bagging specialized to trees, with one extra twist for *more*
+diversity: at each split a tree may only consider a **random subset of the features**
+(by default about $\sqrt{n}$ of them) rather than all of them. This stops every tree
+from leaning on the same one or two dominant features, **decorrelating** the trees so
+their votes carry more independent information. `RandomForestClassifier` packages all of
+this; in the lab it edges bagging at **0.817**.
+
+Because every tree records how much each feature reduced impurity, the forest can rank
+the inputs by **feature importance** — its built-in, *embedded* view of which features
+carry signal (the same family as L10's Lasso selection). In the lab the five real
+acoustic features score 0.105-0.211 while the three pure-noise columns sink to
+0.068-0.073: the forest found the signal on its own.
+
+## Common Pitfalls
+
+- **Reading feature importance as causation.** Importance says a feature was *useful for
+  splitting*, not that it *causes* the label; correlated features also share and dilute
+  importance. Use it to triage, not to conclude.
+- **A forest of one (or five) trees.** The variance reduction is a large-numbers effect.
+  One tree in the lab scores 0.644; it takes a few dozen before the score stabilizes.
+- **Expecting a forest to be as readable as a tree.** You trade the single tree's
+  interpretability for the ensemble's accuracy — a forest is a black box you can only
+  summarize (e.g. via importances).
+- **Leaving a single tree unpruned and calling it a model.** Train accuracy 1.000 is a
+  red flag, not a trophy — it is the overfitting of L09, not success.
+
+::: {.callout-note title="Deep Dive: why averaging cuts variance (Optional)" collapse="true"}
+
+Average $B$ predictors each with variance $\sigma^2$. If they were perfectly
+independent, the average has variance $\sigma^2/B$ — vanishing as $B$ grows. Real trees
+are *not* independent (they share the same training set), so with pairwise correlation
+$\rho$ the averaged variance is $\rho\sigma^2 + \frac{1-\rho}{B}\sigma^2$. The second
+term melts away with more trees, but the first is floored by $\rho$ — which is precisely
+why the random forest works to *lower $\rho$* by randomizing the features at each split.
+Bias is untouched by averaging unbiased learners, so the whole gain comes from the
+variance term. That is the bias-variance dilemma of L09, resolved in your favor.
+:::
+
+## FAQ / Industry Reality
+
+**"One tree or a forest?"** — Use a single (shallow, pruned) tree only when you must
+*explain every decision* to a human — a tree you can print. For accuracy, reach for the
+forest; you almost always pay for the single tree's transparency in test performance.
+
+**"Is the random forest still relevant when boosting exists?"** — Very much. It is the
+default first model for tabular data: strong out of the box, hard to overfit, trains in
+parallel, and needs almost no tuning. Boosting (L13) often wins the last few points but
+demands more care. Try the forest first; reach for boosting when you need the edge.
+
+**"Why does sampling features help — isn't more information always better?"** — Each tree
+sees *less* information, so individually it is a touch weaker; but the forest as a whole
+is *more diverse*, and the vote of many decorrelated weak trees beats the vote of many
+near-identical strong ones. Diversity, not individual strength, is what the ensemble buys.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Decision tree | nested yes/no splits; readable; CART builds binary splits |
+| Gini / entropy | impurity measures; a split maximizes the impurity drop (information gain) |
+| Greedy splitting | take the best split now, recurse; locally optimal |
+| `max_depth` | the flexibility dial; unbounded -> memorizes (train 1.000) |
+| Tree overfitting | low bias, high variance — the L09 cautionary tale in the flesh |
+| Ensemble | many predictors vote; diverse weak learners -> a strong one |
+| Bagging | train trees on bootstrap resamples + vote; variance down, bias flat |
+| OOB score | free validation from the ~1/3 rows each tree never sampled |
+| Random forest | bagging of trees + random feature subset per split (decorrelates) |
+| Feature importance | impurity-reduction ranking; embedded feature selection (L10 cousin) |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 6 (decision trees) and ch. 7
+  (ensemble learning and random forests) — the source this lesson follows most closely.
+- **Docs:** [scikit-learn's ensemble guide](https://scikit-learn.org/stable/modules/ensemble.html)
+  — bagging, random forests, voting, and feature importance with runnable examples.
+- **Text, deeper:** James et al., *An Introduction to Statistical Learning*, ch. 8 —
+  trees, bagging, random forests, and the bias-variance reasoning behind them.

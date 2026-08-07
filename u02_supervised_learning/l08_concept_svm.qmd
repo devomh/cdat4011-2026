@@ -1,0 +1,229 @@
+---
+title: "Support Vector Machines: The Widest Street and the Kernel Trick"
+unit: "II"
+lesson: "08"
+type: concept
+tags: [classification, svm, margin, support-vectors, kernel-trick]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** the maximal-margin idea — among all separating boundaries, prefer the widest street,
+  held up by the support vectors. *(Understand)*
+- **Explain** soft margins and the C dial: the trade between a wide, tolerant margin and strict
+  classification. *(Understand)*
+- **Explain** the kernel trick — separating data in a lifted space without ever computing the lift.
+  *(Understand)*
+- **Train and evaluate** linear and RBF SVMs in scikit-learn, locate the support vectors, and
+  **diagnose** an overfit kernel from the train-vs-test gap. *(Apply / Analyze — in the lab)*
+
+> **Where this sits:** after `L07 — Naive Bayes` · this completes Unit II's algorithms; next: learning
+> theory — `L09 — The Bias-Variance Dilemma & Cross-Validation`.
+>
+> **Hands-on:** [Lab — Drawing the Widest Street](l08_lab_svm.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u02_supervised_learning/l08_lab_svm.ipynb)
+
+## Why This Matters
+
+Look back at L04's coqui boundary. It separates the training calls — but so do infinitely many other
+lines, some skimming carelessly close to one species' cloud. All of them score the same on the
+*training* data. Which one should you trust on the next thousand recordings?
+
+The support vector machine gives a principled answer: the line with the most **breathing room** —
+maximum distance to the nearest call of either species. A boundary that barely squeaks past the
+training data has no slack for the slightly different data the future will bring; a boundary in the
+middle of the widest gap does.
+
+::: {.callout-tip title="Analogy"}
+Think of the boundary as a **street** paved between the two classes: the centerline is the decision
+boundary, the two curbs are the margins. SVM paves the *widest possible street* — and the few data
+points pressed up against the curbs are the **support vectors**, the only points actually holding the
+street in place. Everyone else could move or vanish; the street stays.
+:::
+
+## Hyperplanes: Boundaries in Any Dimension
+
+L04 and L05 established that a linear classifier's decision boundary is a line in the feature plane,
+written as a **separating hyperplane**. The general name is **hyperplane**: in 2 dimensions a line, in
+3 a plane, in $p$ dimensions a flat $(p-1)$-dimensional sheet defined by
+
+$$f(\mathbf{x}) = b_0 + b_1 x_1 + b_2 x_2 + \dots + b_p x_p = 0$$
+
+The sign of $f(\mathbf{x})$ says which side a point is on — that is the classifier — and the *size* of
+$f(\mathbf{x})$ grows with distance from the boundary: near zero means near the boundary. scikit-learn
+exposes this score as `decision_function`, the SVM cousin of L04's `predict_proba` (a raw signed score
+rather than a probability). A **separating hyperplane** (L05) is one that puts every training point of
+one class on the positive side and the other class on the negative side.
+
+| Symbol | Name | In the street picture |
+|--------|------|----------------------|
+| $f(\mathbf{x}) = 0$ | decision boundary | the centerline |
+| $f(\mathbf{x}) = \pm 1$ | the margins | the two curbs |
+| margin | distance from centerline to curb | half the street's width |
+| support vectors | training points on or inside the curbs | what holds the street up |
+
+## The Maximal Margin
+
+If one separating hyperplane exists, infinitely many do — shift it a little, tilt it a little, it
+still separates. The **maximal margin classifier** picks the one whose nearest training point is as
+far away as possible: maximize the margin $M$ such that every point sits at least $M$ from the
+boundary, on its correct side. (The formal statement is in the Deep Dive; the lab draws the result.)
+
+Two consequences are worth committing to memory:
+
+- **Only the support vectors matter.** The optimization is pinned entirely by the points touching the
+  curbs. Delete every other training point and refit: the boundary does not move. In the lab, 100 of
+  225 coqui calls do all the work.
+- **The margin is a bet on generalization.** A wide margin on the training data is the model's slack
+  for unseen data — the geometric cousin of everything Unit III will formalize.
+
+## Soft Margins and the C Dial
+
+The pure, violation-free version — **hard margin** classification — has two fatal sensitivities: it
+only exists if the data is perfectly linearly separable (the coqui calls are not), and a single
+outlier can wrench the whole street sideways, since the nearest point dictates everything.
+
+Real SVMs pave a **soft margin**: keep the street as wide as possible *while tolerating some margin
+violations* — points inside the street, or even on the wrong side. The tolerance is priced by the
+hyperparameter **C**:
+
+| C | The street | The risk |
+|---|-----------|----------|
+| **low** (e.g. 0.1) | wide and tolerant; many violations allowed; many support vectors | may ignore real structure (too lax) |
+| **high** (e.g. 100) | narrow and strict; violations punished hard; few support vectors | bends to accommodate noise — the model starts **memorizing** the training set |
+
+That memorization failure — excellent on training data, worse on new data — is called **overfitting**.
+This is its first appearance by name; the lab catches it red-handed with a train-vs-test gap, and Unit
+III is devoted to it. The practical rule from the legacy course stands: *if your SVM overfits, lower C.*
+
+## When No Straight Line Works: The Lift
+
+Some data is simply not linearly separable — no street, however soft, gets the lab's two interleaved
+kayak routes apart. The classic escape: **add a dimension**.
+
+Take points on a plane, $(x_1, x_2)$, and lift each to three dimensions as
+$(x_1,\, x_2,\, x_1^2 + x_2^2)$ — the new third coordinate is the squared distance from the origin.
+Points near the origin stay low; points far away rise high. A circular boundary on the plane ("inside
+vs outside the circle") becomes a simple *horizontal plane cut* in the lifted space — a hyperplane.
+Linear machinery, applied in a cleverly built space, separates nonlinear data.
+
+Two problems block the naive version: computing high-dimensional (sometimes infinite-dimensional)
+coordinates is expensive, and choosing the right lift by hand is guesswork.
+
+## The Kernel Trick
+
+Here is the structural fact that makes SVMs famous: the SVM optimization touches the training data
+**only through dot products** between pairs of points. It never needs a point's lifted coordinates —
+only the dot products *between* lifted points.
+
+A **kernel** is a function that returns exactly that — the lifted dot product — computed directly from
+the original coordinates, without ever building the lift:
+
+$$K(\mathbf{x}, \mathbf{z}) = \phi(\mathbf{x}) \cdot \phi(\mathbf{z})$$
+
+Swap the kernel, and the SVM works in a different lifted space at no extra cost. That substitution is
+the **kernel trick**.
+
+| Kernel | $K(\mathbf{x}, \mathbf{z})$ | What it buys |
+|--------|------------------------------|--------------|
+| **Linear** | $\mathbf{x} \cdot \mathbf{z}$ | the plain street; fast, interpretable |
+| **Polynomial** | $(1 + \mathbf{x} \cdot \mathbf{z})^d$ | curved boundaries from feature interactions up to degree $d$ |
+| **RBF (Gaussian)** | $\exp(-\gamma \lVert \mathbf{x} - \mathbf{z} \rVert^2)$ | the default for "nonlinear, no idea what shape": similarity decays with distance; boundaries of nearly any shape |
+
+The RBF kernel's **gamma** sets how far each training point's influence reaches: small gamma, broad
+influence, smooth boundaries; large gamma, tiny islands of influence around individual points — and an
+express lane to overfitting (the lab's Exercise 2).
+
+## Choosing a Classifier: The Unit II Roster
+
+Unit II's algorithms, one decision table — every row is a lesson you now own:
+
+| You need... | Reach for | Lesson |
+|-------------|-----------|--------|
+| a number, not a class | linear regression | L03 |
+| calibrated probabilities, an interpretable linear baseline | logistic regression | L04 |
+| a mistake-driven linear classifier; the neuron's ancestor | the Perceptron | L05 |
+| class descriptions (generative) with correlated features respected | GDA / LDA | L06 |
+| a model trained instantly, on little data, or on text/counts | Naive Bayes | L07 |
+| maximum-margin robustness; nonlinear boundaries via kernels | SVM | L08 |
+
+None of these is "the best" — each owns a regime, which is why you learned the whole roster.
+
+## When to Use / When NOT to Use
+
+- **Use it when:** small-to-medium datasets (hundreds to a few tens of thousands); many features; you
+  suspect a nonlinear boundary but cannot specify it (RBF); you want robustness driven by margins
+  rather than probabilities.
+- **Avoid it when:** datasets are very large (training cost grows steeply with sample count); you need
+  probability outputs natively (see FAQ); you need a model a non-specialist can read off (L03/L04
+  coefficients win).
+
+## Common Pitfalls
+
+- **Unscaled features.** Margins and the RBF's $\lVert \mathbf{x} - \mathbf{z} \rVert$ are *distances*
+  — a feature measured in grams will drown one measured in kHz. Our labs dodge this with same-scale
+  features (a deliberate, recorded choice); in practice you standardize first (`StandardScaler` —
+  exercised properly in Unit III's pipelines).
+- **Cranking C or gamma until training looks perfect.** A near-1.0 *training* score with a sagging
+  test score is overfitting, not success — the lab makes you measure both.
+- **Quoting `decision_function` as confidence.** It is a useful signed score, not a probability; its
+  scale is set by the margin, not by calibration.
+
+::: {.callout-note title="Deep Dive: the optimization, stated honestly (Optional)" collapse="true"}
+
+The maximal margin classifier solves a constrained optimization:
+
+$$\underset{b_0, \dots, b_p,\; M}{\text{maximize}} \; M \quad \text{subject to} \quad \sum_{j=1}^{p} b_j^2 = 1, \qquad y_i\, f(\mathbf{x}_i) \geq M \;\; \text{for all } i$$
+
+with labels coded $y_i \in \{-1, +1\}$, so $y_i f(\mathbf{x}_i) > 0$ means "correctly classified" and
+the constraint reads "every point at least $M$ from the boundary, on its correct side". The
+normalization pins the coefficients' scale so $M$ is a real distance. The soft-margin version adds
+slack variables priced by C. Solving it (via the dual problem, which is also where the data appears
+only as dot products — the kernel trick's entry point) belongs to an optimization course; using the
+solution well belongs to this one.
+:::
+
+## FAQ / Industry Reality
+
+**"Why is it called a support vector *machine*?"** — "Machine" is a 1990s flourish (cf. "Boltzmann
+machine"), but "support vector" is literal: the boundary is *supported* by those vectors the way a
+tent is supported by its poles. The term to retain is the geometry — most of the training set
+contributes nothing to the final model, which also means the fitted model can be stored compactly.
+
+**"SVM or logistic regression — which do I try first?"** — On a linear-ish problem, both, they cost
+minutes (the lab's coqui numbers land within 0.013 of each other). Logistic wins when you need
+probabilities and coefficient stories; SVM earns its keep when the boundary is nonlinear (kernels) or
+when maximum-margin robustness matters more than interpretation. On very large datasets, plain
+logistic (or Unit V's networks) usually beats kernel SVMs on cost.
+
+**"Can an SVM give me probabilities like `predict_proba`?"** — Not natively — the machine outputs a
+margin score (`decision_function`). scikit-learn can bolt on probabilities (`SVC(probability=True)`,
+which fits an extra calibration model, Platt scaling, at extra cost), but if probabilities are the
+point of your application, that is a sign logistic regression was the right tool to begin with.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Hyperplane | a flat boundary in any dimension; sign of $f(\mathbf{x})$ = side |
+| Maximal margin | the widest street between the classes |
+| Support vectors | the points on/inside the curbs; the only ones that matter |
+| Hard vs soft margin | no violations allowed vs violations priced by C |
+| C dial | low = wide tolerant street; high = narrow strict, overfit risk |
+| The lift | add dimensions until a flat cut separates the data |
+| Kernel trick | lifted dot products computed directly; the lift never built |
+| RBF + gamma | default nonlinear kernel; gamma = reach of each point's influence |
+| Overfitting (preview) | great on training, worse on test; Unit III's subject |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 5 — SVMs end to end, including the
+  regression variant this lesson skips.
+- **Docs:** [scikit-learn's SVM user guide](https://scikit-learn.org/stable/modules/svm.html) —
+  kernels, scaling advice, and the complexity caveats in one place.
+- **Text, deeper:** James et al., *An Introduction to Statistical Learning*, ch. 9 — the
+  maximal-margin, soft-margin, kernel arc with the math this lesson deferred.

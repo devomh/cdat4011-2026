@@ -1,0 +1,17 @@
+---
+title: "CDAT 4011 — Machine Learning"
+---
+
+Course site under construction. Lessons appear here, grouped by unit, as they are
+published through the authoring workflow.
+
+| Unit | Module | Status |
+|------|--------|--------|
+| I — Introduction | `u01_introduction` | L01 published |
+| II — Supervised Learning | `u02_supervised_learning` | L02-L05 published (unit complete) |
+| III — Learning Theory | `u03_learning_theory` | L06 published |
+| IV — Boosting & Bagging | `u04_ensembles` | pending |
+| V — Neural Networks | `u05_neural_networks` | pending |
+| VI — Unsupervised Learning | `u06_unsupervised_learning` | pending |
+| VII — Dimensionality Reduction | `u07_dimensionality_reduction` | pending |
+| VIII — Reinforcement Learning | `u08_reinforcement_learning` | pending |

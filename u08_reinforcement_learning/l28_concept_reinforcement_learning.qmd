@@ -1,0 +1,205 @@
+---
+title: "Reinforcement Learning: The Paradigm"
+unit: "VIII"
+lesson: "28"
+type: concept
+tags: [reinforcement-learning, mdp, bellman, value-iteration, paradigm]
+difficulty: introductory
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Identify** the elements of a reinforcement-learning problem -- **agent**, **environment**, **state**,
+  **action**, **reward**, and the trial-and-error loop -- and contrast RL with supervised and
+  unsupervised learning. *(Understand)*
+- **Formulate** a task as a **Markov Decision Process**: the tuple of states, actions, transition
+  probabilities, rewards, and a discount factor, with a **policy** mapping states to actions.
+  *(Understand / Apply)*
+- **Explain** the **value function** and **action-value function**, and the **Bellman optimality**
+  equation that ties a state's value to its successors'. *(Understand)*
+- **Apply** **value iteration** on a small gridworld to compute the optimal values and read off the
+  **optimal policy**. *(Apply)*
+- **Analyze** how the reward shapes the optimal policy, and locate the hands-on RL track (Gym,
+  Q-learning, policy search) as the corequisite **CDAT 4013** lab. *(Analyze)*
+
+> **Where this sits:** this lesson **closes CDAT 4011** -- Unit VIII, the one reinforcement-learning
+> session. Units I-IV did supervised learning, Unit V deep learning, Units VI-VII unsupervised learning;
+> `L01 — What Is Machine Learning?` named the three paradigms, and this is the third one made real. It is
+> **paradigm-level** by design: we build the conceptual machinery (the agent-environment-reward loop, the
+> Markov Decision Process, policy and value, the Bellman equation) and make it concrete on one gridworld.
+> · The **practical** RL track -- Gym/CartPole environments, Q-learning, policy search -- is the
+> corequisite **CDAT 4013 section 14** lab.
+>
+> **Hands-on:** [Lab — Solving a Gridworld with Value Iteration](l28_lab_reinforcement_learning.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u08_reinforcement_learning/l28_lab_reinforcement_learning.ipynb)
+
+## Why This Matters
+
+No one handed you a labelled dataset of correct muscle movements when you learned to ride a bike. You
+tried, wobbled, fell, and adjusted -- the falls and the metres you stayed upright were the only feedback
+you got. That is **reinforcement learning**: an **agent** acts in an **environment**, receives a scalar
+**reward**, and learns behaviour that maximizes reward over time, by trial and error rather than from
+answers. It is a genuinely different setting from the rest of this course -- no fixed training set, no
+target labels, just consequences -- and it is how programs learned to beat world champions at Go and to
+play Atari from raw pixels. This final lesson is the **paradigm**: how to frame such a problem and what
+it means to solve it.
+
+::: {.callout-tip title="Analogy"}
+Training a dog: you cannot explain "sit" in words, so you reward the behaviour you want and withhold the
+treat otherwise. The dog (the **agent**) tries actions, feels the consequences (**reward**), and slowly
+shifts its **policy** toward whatever earns treats. It never sees a labelled list of correct moves -- it
+learns the mapping from situations to actions purely from reward. Reinforcement learning is that loop,
+written as math.
+:::
+
+## The Third Paradigm
+
+The earlier units learned from a fixed dataset: **supervised learning** maps inputs to given labels,
+**unsupervised learning** finds structure in unlabelled data. **Reinforcement learning** has no dataset
+at all. Instead, an **agent** interacts with an **environment** in a loop: it observes a **state**, picks
+an **action**, and the environment returns a **reward** and a new state. The agent's goal is to maximize
+its **cumulative** reward over time -- which means actions must be judged by their long-term
+consequences, not just the immediate payoff.
+
+```{mermaid}
+flowchart LR
+  A["Agent<br/>(policy pi)"] -- "action a_t" --> E["Environment"]
+  E -- "new state s_t+1<br/>reward r_t+1" --> A
+```
+
+The hard part is that rewards can be **delayed**: a move now may only pay off (or backfire) many steps
+later, so the agent must learn which early actions deserve credit for a later reward. That is what the
+machinery below is for.
+
+## The Markov Decision Process
+
+The standard formalism for an RL problem is the **Markov Decision Process** (MDP), the tuple
+
+$$
+(\mathcal{S},\ \mathcal{A},\ P,\ R,\ \gamma)
+$$
+
+with **states** $\mathcal{S}$, **actions** $\mathcal{A}$, **transition dynamics**
+$P(s' \mid s, a)$ (the probability of landing in $s'$ after action $a$ in $s$), a **reward** $R$, and a
+**discount factor** $\gamma \in [0, 1]$. The "Markov" property is the key modelling assumption: the next
+state depends only on the *current* state and action, not the full history. A **policy** $\pi(s)$ chooses
+the action in each state, and the agent's objective is the expected **discounted return**
+
+$$
+G_t = R_{t+1} + \gamma R_{t+2} + \gamma^2 R_{t+3} + \cdots = \sum_{k=0}^{\infty} \gamma^k R_{t+k+1}.
+$$
+
+The discount $\gamma$ trades immediate against future reward: near 0 the agent is short-sighted, near 1
+it plans far ahead. In the lab's gridworld $\mathcal{S}$ is the 11 squares, $\mathcal{A}$ is
+{N, S, E, W}, $P$ is the noisy 0.8 / 0.1 / 0.1 motor, $R$ is +1 / -1 at the terminals and -0.04 elsewhere,
+and $\gamma = 1$.
+
+## Value, and the Bellman Equation
+
+How good is a state? The **value function** $V^{\pi}(s)$ is the expected return from $s$ when following
+policy $\pi$; the **action-value function** $Q^{\pi}(s, a)$ is the expected return after taking action
+$a$ in $s$ and following $\pi$ thereafter. The *best* achievable values satisfy the **Bellman optimality**
+equation -- a state's optimal value is its reward plus the discounted best expected next value:
+
+$$
+V^{*}(s) = R(s) + \gamma \max_{a} \sum_{s'} P(s' \mid s, a)\, V^{*}(s'),
+\qquad
+\pi^{*}(s) = \arg\max_{a} \sum_{s'} P(s' \mid s, a)\, V^{*}(s').
+$$
+
+This is a fixed-point equation, and **value iteration** solves it the obvious way: start with any values
+and apply the update to every state, repeatedly, until they stop changing. In the lab this converges in
+36 sweeps to values that match the Russell & Norvig textbook exactly, and the greedy policy over $V^{*}$
+routes the robot to the +1 goal while steering *around* the -1 pit. The action-value ties the two
+together: $V^{*}(s) = \max_a Q^{*}(s, a)$ -- the value of a state is the value of its best action, and
+$Q$ is what an agent ultimately acts on.
+
+## Exploration vs Exploitation
+
+There is a tension unique to learning from reward. To do well you should **exploit** the actions you know
+are good; but to *find* the good actions in the first place you must **explore** ones you are unsure
+about. Order your favourite dish every time and you never discover a better one; always try something new
+and you never enjoy the one you already like. Every RL algorithm needs a rule for balancing the two. In
+the gridworld we sidestepped this -- we were handed the model, so we could just compute the answer -- but
+an agent that must *learn* the environment lives or dies by how it explores.
+
+```{mermaid}
+flowchart TD
+  S{"Does the agent KNOW<br/>the model P and R?"}
+  S -- "yes (planning)" --> MB["Model-based:<br/>value / policy iteration<br/>(this lesson's gridworld)"]
+  S -- "no (learn from experience)" --> MF["Model-free:<br/>Q-learning, TD, policy gradients<br/>(Gym/CartPole, CDAT 4013)"]
+```
+
+::: {.callout-note title="Deep Dive: model-based vs model-free (Optional)" collapse="true"}
+
+The gridworld is the **easy** case: we were handed the transition probabilities $P$ and the rewards $R$,
+so solving it is a **planning** problem -- value iteration computes $V^{*}$ directly from the known model,
+no experience required. That is **model-based** RL.
+
+The harder, more typical case is **model-free**: the agent does **not** know $P$ or $R$ and must learn
+good behaviour purely from the rewards it collects by acting. **Q-learning** and **temporal-difference
+(TD)** learning estimate the value functions from sampled transitions; **policy-gradient** methods adjust
+the policy directly by following the gradient of reward. These are what run on real environments like
+Gym's CartPole, and they are the substance of the **CDAT 4013 section 14** lab. The concepts here -- state,
+action, reward, value, the Bellman relationship -- are exactly the vocabulary those algorithms are built
+on; this lesson is the map, 4013 is the territory.
+:::
+
+## Common Pitfalls
+
+- **Designing a reward that does not mean what you think.** The agent optimizes the reward you *wrote*,
+  not the goal you *intended* -- the lab's -2.0 experiment flips the policy into the pit. Reward design is
+  the real engineering problem in RL.
+- **Confusing the reward with the return.** The agent maximizes the **discounted return** (cumulative
+  future reward), not the immediate reward; a good move can carry a small immediate cost for a large later
+  gain.
+- **Forgetting the discount.** With $\gamma$ too small the agent is short-sighted; with $\gamma = 1$ on a
+  task that never ends, the return is unbounded. Match $\gamma$ to the horizon.
+- **Assuming value iteration always applies.** It needs a **known** model ($P$ and $R$). When the agent
+  must learn from experience, you need model-free methods (Q-learning, TD) -- the CDAT 4013 track.
+- **Mixing up V and Q.** $V(s)$ scores a *state*; $Q(s, a)$ scores an *action in a state*. You act on
+  $Q$ (or on $V$ plus a one-step lookahead through the model).
+
+## FAQ / Industry Reality
+
+**"How is RL different from supervised learning?"** -- No labels and no fixed dataset. The agent
+generates its own data by acting, and its only feedback is a scalar reward that may be delayed many steps
+after the action that earned it. It optimizes long-term return, not next-step accuracy.
+
+**"What is the difference between V and Q?"** -- $V(s)$ is the value of being in a state; $Q(s, a)$ is the
+value of taking a specific action in that state. $Q$ is more directly useful for choosing actions, and
+$V^{*}(s) = \max_a Q^{*}(s, a)$.
+
+**"Is this deep reinforcement learning?"** -- No. This is the tabular paradigm on a tiny known MDP. Deep
+RL replaces the tables with neural networks and learns from experience on large environments -- the
+applied track in **CDAT 4013 section 14** (Gym/CartPole, Q-learning, policy gradients).
+
+**"Why discount future rewards?"** -- It keeps the return finite on long/endless tasks and encodes a
+preference for sooner reward; $\gamma$ is the knob between short-sighted and far-sighted behaviour.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Reinforcement learning | an agent learns from **reward** by trial and error -- no labels, no fixed dataset |
+| Agent / environment / reward | the loop: observe state, take action, get reward + new state, repeat |
+| MDP | the tuple $(\mathcal{S}, \mathcal{A}, P, R, \gamma)$ -- states, actions, transitions, reward, discount |
+| Policy $\pi$ | a mapping from states to actions (what the agent does) |
+| Return $G_t$ | cumulative **discounted** future reward, $\sum_k \gamma^k R$ |
+| Value $V$ / action-value $Q$ | expected return from a **state** / from an **action in a state**; $V^{*} = \max_a Q^{*}$ |
+| Bellman optimality | $V^{*}(s) = R(s) + \gamma \max_a \sum_{s'} P(s'\mid s,a) V^{*}(s')$ |
+| Value iteration | apply the Bellman update until convergence (needs a known model) |
+| Model-based vs model-free | know $P, R$ -> plan (value iteration); don't -> learn (Q-learning / TD, CDAT 4013) |
+| Exploration vs exploitation | try new actions vs use known-good ones -- every learning agent must balance them |
+
+## Where to Go Deeper
+
+- **The corequisite lab:** **CDAT 4013 section 14** -- the hands-on RL track (Gym/CartPole environments,
+  policy search, value iteration as an algorithm, Q-learning) that this paradigm lesson sets up.
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 18 -- reinforcement learning, the
+  agent/environment loop, policy gradients, and Q-learning.
+- **The standard reference:** Sutton & Barto, *Reinforcement Learning: An Introduction* (2nd ed., free
+  online) -- MDPs, value functions, the Bellman equations, and value iteration, at book length.

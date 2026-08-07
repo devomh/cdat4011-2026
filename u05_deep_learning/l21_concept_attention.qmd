@@ -1,0 +1,191 @@
+---
+title: "Attention Mechanisms"
+unit: "V"
+lesson: "21"
+type: concept
+tags: [deep-learning, pytorch, attention, self-attention, query-key-value, scaled-dot-product, sequences]
+difficulty: intermediate
+duration: "90 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** the **query/key/value** roles and the **scaled dot-product attention** formula, and say
+  what the **attention weights** mean (a softmax over positions that sums to 1). *(Understand)*
+- **Explain** what makes attention **self**-attention, and why dividing by **`sqrt(d_k)`** matters.
+  *(Understand)*
+- **Build** scaled dot-product self-attention in PyTorch and **train** it to solve a routing task a
+  non-attentive baseline cannot. *(Apply -- in the lab)*
+- **Analyze** why attention beats recurrence for **long-range** dependencies, and why pure attention is
+  **order-blind**. *(Analyze)*
+
+> **Where this sits:** after `L20 — Autoencoders & Representation Learning`, which learned features with
+> no labels. Attention is a different idea: a layer that learns, from content, *where to look*. · next:
+> `L22 — The Transformer Architecture`, which is built almost entirely out of the attention you build here.
+>
+> **Hands-on:** [Lab — Attention from Scratch](l21_lab_attention.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u05_deep_learning/l21_lab_attention.ipynb)
+
+## Why This Matters
+
+Read this sentence: "The trophy did not fit in the suitcase because **it** was too small." What does
+*it* mean -- the trophy or the suitcase? You knew at once, because you let the word *it* look back at the
+other words and weigh which one mattered. Meaning in a sequence lives in these long-distance links, and
+they can span many words.
+
+Every network so far had a **fixed** wiring. An MLP mixes a fixed-size vector; a CNN slides a fixed
+kernel over neighbors; an autoencoder squeezes a fixed input. None of them can say "for *this* input,
+the third word should listen to the tenth." The older way to handle a sequence was to walk it
+left to right, carrying a running summary forward one step at a time -- but a detail from the first word
+has to survive every step to reach the last, and over long distances the thread frays.
+
+**Attention** removes the walk. It lets every position reach **directly** to every other position and
+pull in what it needs, weighted by relevance -- in a single hop, no matter the distance. It is one
+formula, and it is the single idea the **Transformer** (L22) is built from.
+
+## What an Attention Layer Is
+
+Attention gives every position three roles. Its **query** says what it is looking for; its **key**
+advertises what it offers; its **value** is what it hands over when matched. To compute the output for one
+position, compare its query against **every** key by a dot product -- a large dot product means a good
+match -- turn those scores into weights with a softmax, and return the values blended by those weights.
+Stacking the queries, keys, and values as the rows of matrices $Q$, $K$, $V$, the whole layer is one
+expression:
+
+$$\text{attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{Q K^{\top}}{\sqrt{d_k}}\right) V$$
+
+The matrix $Q K^{\top}$ holds every query-against-every-key score; the softmax runs **along each row**,
+so each query's weights sum to 1; multiplying by $V$ blends the values. It is a soft, differentiable
+dictionary lookup: a query retrieves not one value but a weighted mixture of all of them.
+
+```{mermaid}
+flowchart LR
+  q["query<br/>(this position)"] --> s["scores<br/>query DOT each key"]
+  k["keys<br/>(all positions)"] --> s
+  s --> sm["divide by sqrt(d_k),<br/>then softmax"]
+  sm --> w["attention weights<br/>(sum to 1)"]
+  v["values<br/>(all positions)"] --> o["output<br/>(weighted sum of values)"]
+  w --> o
+```
+
+The matrix of weights is worth looking at directly: row $i$ is **how much position $i$ attends to each
+position**, and it sums to 1. In the lab, four tokens built as two near-duplicate pairs produce a clean
+two-block matrix -- each token attends to itself and its near-twin (weights about 0.54 and 0.45) and
+almost ignores the unrelated pair (0.005). Nobody wrote that rule; the dot products found it.
+
+## Self-Attention
+
+It is **self**-attention when the queries, keys, and values are all computed from the **same** sequence.
+In a real layer three learned matrices -- $W_q$, $W_k$, $W_v$ -- project each token into its query, key,
+and value; with `Q = K = V = X` (the raw tokens) you get the simplest version, where a token attends to
+the tokens it resembles. Either way, every token attends to every token, and the result is an
+$L \times L$ attention matrix for a sequence of length $L$. That all-to-all view is the engine: in one
+layer, every position has gathered information from the whole sequence.
+
+## Why Divide by `sqrt(d_k)`
+
+The scale factor is not decoration. A dot product of two $d_k$-dimensional vectors is a sum of $d_k$
+random-sized terms, so its typical magnitude grows with $d_k$. Feed large scores into a softmax and it
+**saturates**: almost all the weight piles onto a single key, and a saturated softmax has a vanishingly
+small gradient -- the layer stops learning. Dividing by $\sqrt{d_k}$ exactly cancels that growth, keeping
+the scores in a sane range at any dimension.
+
+The lab makes it visible: averaged over many random queries against 8 keys, the largest attention weight
+climbs from 0.53 to **0.94** as $d_k$ grows from 4 to 256 **without** scaling (the softmax has collapsed
+onto one key), but stays steady near **0.36** **with** it. That one $\sqrt{d_k}$ is what keeps attention
+trainable.
+
+## Why Attention Beats Recurrence
+
+The deep reason attention took over sequence modeling is **path length**. Walking a sequence step by step,
+information from position 1 must pass through every intermediate position to reach position $n$ -- an
+$n$-step path, and gradients fade along it, so distant links are hard to learn. Under attention, position
+1 and position $n$ are connected **directly**: a single hop, the same for any pair, no matter how far
+apart. And because every position is computed from the same matrices at once, attention is **parallel**
+over the sequence rather than strictly left-to-right.
+
+```{mermaid}
+flowchart TB
+  subgraph R["recurrence: a detail must walk the whole chain"]
+    direction LR
+    r1["x1"] --> r2["x2"] --> r3["x3"] --> r4["x4"]
+  end
+  subgraph A["attention: every position reaches every other in one hop"]
+    direction LR
+    a1["x1"] --- a2["x2"]
+    a1 --- a3["x3"]
+    a1 --- a4["x4"]
+    a2 --- a3
+    a2 --- a4
+    a3 --- a4
+  end
+```
+
+The lab demonstrates the win concretely. On a lookup where the answer sits at a slot that can be anywhere
+in the sequence, a single self-attention layer scores a perfect **1.00**, while a baseline that pools the
+positions together -- same information, no way to route it -- manages only **0.37**. The trained
+attention puts **0.96** of its weight on the one matching slot, wherever it sits, and still does at twice
+the length.
+
+## Order-Blindness
+
+There is a catch, and it matters. Pure attention treats its input as a **set**: a sum over positions with
+no notion of their order. Shuffle the tokens and the output is identical (the lab checks this directly).
+For the lookup that is correct -- the answer does not depend on order -- but for language it is fatal:
+"dog bites man" and "man bites dog" would look the same. The fix is to add position information to each
+token, called **positional encoding**. Pure attention supplies the *reach*; positional encoding supplies
+the *order*. Combining them, with several attention heads and a stack of blocks, is exactly what the
+**Transformer** does -- the subject of L22.
+
+## Common Pitfalls
+
+- **Confusing the key with the value.** You **match** on keys (query against key) and **retrieve**
+  values. They are different projections of the token for different jobs.
+- **Reading the softmax as global.** The softmax runs **per row**: each query's weights sum to 1, not the
+  whole matrix.
+- **Dropping the `sqrt(d_k)` scale.** In high dimension the softmax saturates and the layer barely trains.
+- **Assuming attention knows order.** It does not -- it is a set operation. Order comes from positional
+  encoding (L22).
+- **Thinking one attention layer is a Transformer.** Attention is the core operation; the Transformer
+  adds multi-head attention, positional encoding, and a stack of residual blocks (all L22).
+
+## FAQ / Industry Reality
+
+**"Where is attention actually used?"** -- In **Transformers**, which now power essentially all large
+language models and much of modern vision and speech. The attention layer you build here is the heart of
+all of them; L22 assembles it into the full architecture.
+
+**"What is multi-head attention?"** -- Instead of one attention computation, run several in parallel
+(several "heads"), each with its own $W_q/W_k/W_v$, so different heads can attend to different things
+(one to syntax, another to a distant noun), then combine them. It is a small, important addition -- and it
+is L22.
+
+**"Isn't all-to-all expensive?"** -- Yes. With $L$ positions the attention matrix is $L \times L$, so cost
+grows with the **square** of the sequence length. That quadratic cost is the main thing that limits
+context length, and reducing it (sparse, linear, and flash attention) is active research.
+
+**"Did attention really replace recurrence?"** -- For most sequence modeling, yes. The path-length and
+parallelism advantages, at scale, were decisive; recurrent models are now a niche rather than the default.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---|---|
+| Query / Key / Value | what a position seeks / what it offers to match / what it passes on |
+| Scaled dot-product attention | `softmax(Q K^T / sqrt(d_k)) V` -- the whole layer in one formula |
+| Attention weights | the $L \times L$ matrix; row $i$ = how much $i$ attends to each position (row sums to 1) |
+| Self-attention | Q, K, V all from the same sequence -> every token attends to all |
+| `sqrt(d_k)` scaling | stops the softmax saturating in high dimension (keeps it trainable) |
+| Long-range dependency | any two positions connect in one hop (vs a recurrent chain's many) |
+| Order-invariance | pure attention is a set operation -> needs positional encoding (L22) |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 16 -- attention and the Transformer
+  (query/key/value, scaled dot-product, multi-head) with worked examples.
+- **Foundational:** Vaswani et al. (2017), *Attention Is All You Need* -- the paper that made attention
+  the default; reads well once you have built the core operation.
+- **Visual:** Jay Alammar, *The Illustrated Transformer* -- a careful, picture-by-picture walk from
+  scaled dot-product attention up to the full stack (the L22 material).

@@ -1,0 +1,207 @@
+---
+title: "Multilayer Perceptrons"
+unit: "V"
+lesson: "15"
+type: concept
+tags: [neural-networks, mlp, pytorch, universal-approximation, training-loop, deep-learning]
+difficulty: intermediate
+duration: "90 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** the multilayer-perceptron architecture (input to hidden to output) and **state**
+  what universal approximation does and does not promise. *(Understand)*
+- **Build** an MLP in PyTorch with `nn.Sequential` (`nn.Linear` + `nn.ReLU`) and read its
+  structure and parameter count. *(Apply — in the lab)*
+- **Train** an MLP with the explicit four-step loop (forward, loss, backward, step) and
+  **explain** each step, treating autograd as a black box. *(Apply / Understand)*
+- **Demonstrate** that a hidden layer learns a nonlinear boundary a linear model cannot, and that
+  a wider hidden layer approximates a function better. *(Apply / Analyze — in the lab)*
+
+> **Where this sits:** after `L14 — From Perceptrons to Neural Networks`, where we *hand-wired* a
+> two-layer network to solve XOR. This lesson **learns** the weights instead, with the course's
+> deep-learning framework, **PyTorch**. · next: `L16 — Backpropagation & Autodiff`, which opens
+> the `backward()` black box this lesson treats as magic.
+>
+> **Hands-on:** [Lab — Training a Multilayer Perceptron in PyTorch](l15_lab_multilayer_perceptron.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u05_deep_learning/l15_lab_multilayer_perceptron.ipynb)
+
+## Why This Matters
+
+L14 ended on a cliffhanger. We proved a two-layer network *can* solve XOR — but only because we
+played god and set every weight by hand. That does not scale: a real network has thousands to
+billions of weights and no human to place them. This lesson removes the training wheels. It
+introduces the **multilayer perceptron (MLP)** as the general architecture, states the theorem
+that makes MLPs worth using (**universal approximation**), and then *learns* the weights from data
+with **PyTorch**, the course's deep-learning framework.
+
+::: {.callout-tip title="Analogy"}
+L14 was sculpting a statue by placing every grain of clay by hand. L15 is pouring the clay into a
+mold and letting **gradient descent** settle it into shape. We still watch every step of the pour
+— forward, loss, backward, step — we just no longer place each grain ourselves.
+:::
+
+## The MLP Architecture
+
+A **multilayer perceptron** stacks the neurons of L14 into layers:
+
+- an **input layer** (one value per feature),
+- one or more **hidden layers** of neurons (each a dense layer + a nonlinear activation),
+- an **output layer** whose shape is chosen by the task.
+
+Signal flows one way, input to output — a **feedforward** network. A net with a *deep* stack of
+hidden layers is a **deep neural network (DNN)**, and studying those is what "deep learning" means.
+For one hidden layer, the whole model is two of L14's layer equations chained:
+
+$$
+\mathbf{h} = \phi(\mathbf{W}_1\mathbf{x} + \mathbf{b}_1), \qquad
+\hat{\mathbf{y}} = \mathbf{W}_2\mathbf{h} + \mathbf{b}_2 .
+$$
+
+The **output layer** is picked to match the problem: **K logits** (then softmax) for K-class
+classification, or **one linear unit** for regression. The hidden layers are where the network
+builds its own useful features — exactly the "act on what the previous layer computed" idea from
+L14.
+
+```{mermaid}
+flowchart LR
+  subgraph IN["input layer"]
+    X1(("x1")); X2(("x2"))
+  end
+  subgraph H["hidden layer (ReLU)"]
+    H1(("h1")); H2(("h2")); H3(("h3"))
+  end
+  subgraph OUT["output layer"]
+    O1(("logit 1")); O2(("logit 2"))
+  end
+  X1 --> H1 & H2 & H3
+  X2 --> H1 & H2 & H3
+  H1 --> O1 & O2
+  H2 --> O1 & O2
+  H3 --> O1 & O2
+```
+
+## Universal Approximation
+
+Why expect a pile of neurons to fit anything useful? Because of a remarkable result: a network
+with **one hidden layer**, given **enough units**, can approximate **any continuous function** to
+arbitrary accuracy. MLPs are universal shape-fitters. In the lab you watch this directly — a
+one-hidden-layer net fits a wiggly curve worse with one unit (MSE 0.465) and almost perfectly with
+sixteen (MSE 0.0002).
+
+::: {.callout-important title="What universal approximation does NOT promise"}
+It is an **existence** result. It says a good fit *exists* — not how **many** units you need, not
+that **gradient descent will find** it, and not that one ultra-wide layer is the *efficient* shape
+(stacking several hidden layers — going **deep** — usually reaches the same accuracy with far fewer
+units). "Can approximate anything" is a reason MLPs are worth training, not a promise that training
+is easy.
+:::
+
+## Meet PyTorch
+
+We learn the weights with **PyTorch** (the course's deep-learning framework; classic ML stayed on
+scikit-learn). Two pieces are enough to start:
+
+- A **tensor** is PyTorch's n-dimensional array — think a NumPy array that can also track the
+  gradients needed for training.
+- A **model** is built by stacking layers with `nn.Sequential`. Our lab classifier is literally
+
+  ```python
+  model = nn.Sequential(
+      nn.Linear(2, 16),   # dense layer: 2 inputs -> 16 hidden units
+      nn.ReLU(),          # nonlinear activation
+      nn.Linear(16, 2),   # -> 2 logits (one per class)
+  )
+  ```
+
+  That is the architecture diagram above, in code. The model is just a function: feed it inputs,
+  it returns logits.
+
+## The Training Loop
+
+Unlike scikit-learn's one-line `.fit()`, in PyTorch we write the loop ourselves — because *seeing*
+it is the whole point of this unit. Each pass over the data (an **epoch**) repeats four steps:
+
+```python
+optimizer.zero_grad()           # clear last step's gradients (they accumulate)
+logits = model(x)               # 1. forward  — predict
+loss   = loss_fn(logits, y)     # 2. loss     — measure the error
+loss.backward()                 # 3. backward — compute every gradient
+optimizer.step()                # 4. step     — nudge the weights downhill
+```
+
+```{mermaid}
+flowchart LR
+  F["forward<br/>logits = model(x)"] --> L["loss<br/>loss_fn(logits, y)"]
+  L --> B["backward()<br/>autograd -> gradients"]
+  B --> S["optimizer.step()<br/>gradient descent"]
+  S -->|next epoch| F
+```
+
+Three of the four steps are old friends: the **forward** pass is just prediction, the **loss** is
+the error (L04's log loss, here `CrossEntropyLoss`), and the **step** is one move of **gradient
+descent** (L03). The new line is `loss.backward()`: it computes how every weight should change to
+reduce the loss — all 82 of them at once, automatically. We treat **`backward()` as a black box**
+in this lesson; opening it is exactly what L16 (Backpropagation & Autodiff) is for.
+
+::: {.callout-note title="Logits, not probabilities"}
+`nn.CrossEntropyLoss` expects **raw logits** — it applies the (log-)softmax internally. So the
+model's last layer outputs logits with **no** softmax attached; adding one would double-count and
+train worse. To read **probabilities** at inference time, apply `softmax` to the logits *then*,
+outside the loss.
+:::
+
+## Common Pitfalls
+
+- **Adding a `softmax` before `CrossEntropyLoss`.** The loss already does it; a second softmax
+  hurts. Emit logits; apply softmax only at inference to read probabilities.
+- **Forgetting `optimizer.zero_grad()`.** Gradients **accumulate** across steps in PyTorch; skip
+  the clear and each step adds to the last, corrupting training.
+- **Not standardizing inputs.** Like every distance/gradient-based method (L08, L10), an MLP trains
+  far better on standardized features; fit the scaler on the training set only.
+- **Reading universal approximation as "easy".** "Can approximate anything" is existence, not a
+  recipe — you still choose width/depth and rely on gradient descent to find the fit.
+- **No nonlinearity = no depth.** A stack of `nn.Linear` with no activations collapses to one
+  linear layer (L14). The `nn.ReLU()` between layers is mandatory.
+
+## FAQ / Industry Reality
+
+**"Why write the loop instead of calling `.fit()`?"** — Because the forward / loss / `backward()` /
+step cycle *is* the subject of this unit. scikit-learn hides it; PyTorch shows it, which is what
+lets the next lessons open up backprop (L16) and tune the optimizer and regularization (L17). In
+production you often use higher-level helpers, but you must understand the loop they wrap.
+
+**"Why logits instead of probabilities?"** — Numerical stability and correctness: `CrossEntropyLoss`
+combines log-softmax and the negative-log-likelihood in one numerically safe step. Emitting a
+softmax yourself and then taking its log is worse-behaved. Read probabilities with `softmax` only
+when you actually need them, at inference.
+
+**"How many layers and units should I use?"** — There is no formula. More capacity can fit more but
+risks overfitting (L09); universal approximation guarantees a fit *exists*, not that a given size
+finds it. Start small, add capacity if you underfit, regularize if you overfit — the systematic
+tools for deep nets are L17.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---|---|
+| MLP | input layer to one+ hidden dense layers (nonlinear) to an output layer |
+| Output layer | K logits + softmax for classification; one linear unit for regression |
+| Deep network (DNN) | an MLP with a deep stack of hidden layers |
+| Universal approximation | one hidden layer, enough units, approximates any continuous function (existence, not a recipe) |
+| PyTorch model | `nn.Sequential(nn.Linear(...), nn.ReLU(), ...)` — a function from inputs to logits |
+| Training loop | `zero_grad` -> forward -> loss -> `backward()` -> `step`, each epoch |
+| `loss.backward()` | autograd computes every gradient (the black box; mechanism is L16) |
+| Logits + `CrossEntropyLoss` | emit raw logits; the loss applies softmax — never add your own |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 10 — the MLP, its architecture for
+  classification and regression, and the training loop this lesson follows.
+- **Docs:** [PyTorch — "Learn the Basics"](https://pytorch.org/tutorials/beginner/basics/intro.html)
+  — tensors, `nn.Module`/`nn.Sequential`, and the training loop, hands-on.
+- **Theory:** the **universal approximation theorem** (Cybenko 1989; Hornik 1991) — the result that
+  one hidden layer suffices to approximate any continuous function.

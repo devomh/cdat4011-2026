@@ -1,0 +1,225 @@
+---
+title: "Gaussian Discriminant Analysis: Classifying by Modeling Each Class"
+unit: "II"
+lesson: "06"
+type: concept
+tags: [classification, generative-models, bayes-rule, gda, lda, qda, discriminant-analysis]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Identify** the parts of Bayes' rule — prior, likelihood, posterior — and the MAP decision rule.
+  *(Understand)*
+- **Explain** the generative recipe: model each class's distribution $P(x \mid C)$ and prior $P(C)$,
+  then turn them into a prediction with Bayes' rule. *(Understand)*
+- **Contrast** LDA (one shared covariance, a linear boundary) with QDA (a per-class covariance, a
+  quadratic boundary). *(Analyze)*
+- **Contrast** generative classifiers (GDA) with discriminative ones (logistic regression, the
+  Perceptron) and judge when each is preferable. *(Analyze)*
+- **Train and evaluate** LDA and QDA in scikit-learn and **read** their decision boundaries.
+  *(Apply — in the lab)*
+
+> **Where this sits:** after `L05 — Linear Models for Classification` · next: the other generative
+> classifier — Naive Bayes (L07).
+>
+> **Hands-on:** [Lab — Gaussian Discriminant Analysis](l06_lab_gaussian_discriminant_analysis.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u02_supervised_learning/l06_lab_gaussian_discriminant_analysis.ipynb)
+
+## Why This Matters
+
+A rapid dengue test advertised as "95% accurate" comes back positive during a low-transmission
+month. Should the clinic treat it as near-certainty? Run the numbers: if 2% of tested patients
+actually have dengue, the test catches 95% of true cases and falsely flags 5% of healthy ones, then
+out of 1,000 patients about $0.95 \times 20 = 19$ true positives stand next to $0.05 \times 980 = 49$
+false ones. A positive result means dengue only $19 / (19 + 49) \approx 28\%$ of the time.
+
+The missing ingredient in the naive "95%" reading is the **prior** — how common the class is before
+any evidence arrives. Bayes' rule is the machine for combining priors with evidence, and the family
+of classifiers in this lesson and the next points that machine at classification by modeling what
+each class *looks like*.
+
+::: {.callout-tip title="Analogy"}
+A generative classifier learns a **portrait of each class** — a typical mango of each cultivar, say.
+To label a new fruit it asks: *which portrait does this most resemble, weighted by how common that
+cultivar is to begin with?* Logistic regression (L04) never draws a portrait; it only learns where
+to put the fence between the classes. Same goal, opposite strategy.
+:::
+
+## Bayes' Rule
+
+For a class $C$ and observed features $x$, Bayes' rule reads:
+
+$$P(C \mid x) = \frac{P(x \mid C)\, P(C)}{P(x)}$$
+
+| Term | Name | The question it answers |
+|------|------|------------------------|
+| $P(C)$ | **prior** | how common is this class, before seeing any evidence? |
+| $P(x \mid C)$ | **likelihood** | how typical is this evidence *for* this class? |
+| $P(C \mid x)$ | **posterior** | given the evidence, how probable is the class now? |
+| $P(x)$ | **evidence** | how common is this evidence overall? (a normalizer) |
+
+In the dengue story the prior is the 2% prevalence, the likelihoods are the test's behavior on sick
+and healthy patients, and the posterior — the only number the patient cares about — is the 28%.
+
+## From Bayes' Rule to a Classifier
+
+Classification with Bayes' rule is one decision: compute the posterior for every class and **pick the
+largest** — the *maximum a posteriori* (MAP) rule. Because every class's posterior shares the same
+denominator $P(x)$, comparing posteriors never requires it:
+
+$$\text{predict } \underset{C}{\text{argmax}} \; P(x \mid C)\, P(C)$$
+
+Prior times likelihood, per class, compare. (To report honest probabilities rather than just a
+winner, normalize the products so they sum to 1 — the lab does both.) Everything that follows is a
+choice of **how to model the likelihood** $P(x \mid C)$.
+
+## Generative vs Discriminative
+
+L05 named the split; here is the machine behind it. A **generative** classifier models each class —
+its distribution $P(x \mid C)$ and prior $P(C)$ — and lets Bayes' rule produce the boundary as a
+by-product. A **discriminative** classifier (logistic regression, the Perceptron) learns the boundary
+$P(C \mid x)$ directly and never models the classes at all.
+
+```{mermaid}
+flowchart TB
+  subgraph G["Generative (GDA, Naive Bayes)"]
+    direction LR
+    D1["Training data"] --> M1["A model of each class:<br/>P(x given C) and P(C)"]
+    M1 -->|"Bayes' rule"| B1["P(C given x)<br/>and the boundary"]
+  end
+  subgraph D["Discriminative (logistic, Perceptron)"]
+    direction LR
+    D2["Training data"] --> M2["The boundary directly:<br/>P(C given x)"]
+  end
+```
+
+| | Generative (GDA) | Discriminative (logistic) |
+|---|------------------|---------------------------|
+| Models | $P(x \mid C)$ and $P(C)$ | $P(C \mid x)$ directly |
+| Learns | what each class *looks like* | what *separates* the classes |
+| Training | per-class means + covariances (a formula, no iteration) | iterative gradient descent |
+| Bonus ability | can *describe* (even generate) a typical class member | none — boundary only |
+
+A generative model spends effort describing each class and gets the boundary for free; a
+discriminative model spends everything on the boundary itself.
+
+## Gaussian Discriminant Analysis
+
+GDA makes the natural choice for continuous features: **model each class as a multivariate Gaussian**.
+For class $C$ that means a mean vector $\mu_C$ (the class's center) and a covariance matrix
+$\Sigma_C$ — and the covariance is the new power here. A single feature's spread is one number; a
+covariance matrix also captures how features **vary together**. In the lab's mangoes, longer fruit
+run heavier *within* a cultivar, so length and weight are correlated; the covariance encodes that
+tilt, and the fitted Gaussian is a tilted ellipse rather than an axis-aligned blob.
+
+Training is just arithmetic: estimate each class's mean and covariance from its training points, and
+each prior from its share of the data. To classify a new point, evaluate each class's Gaussian
+density at that point (the likelihood), multiply by the prior, and take the argmax — the MAP rule,
+exactly as above.
+
+## LDA vs QDA: One Covariance or Many
+
+The one modeling choice left is whether the classes **share** a covariance matrix:
+
+- **Linear discriminant analysis (LDA)** — assume *all* classes share one common covariance
+  $\Sigma$. When the likelihoods differ only in their means, the curved parts of the Bayes boundary
+  cancel and what remains is a straight line (a hyperplane). `LinearDiscriminantAnalysis` in
+  scikit-learn.
+- **Quadratic discriminant analysis (QDA)** — give *each* class its own covariance $\Sigma_C$. The
+  curvature no longer cancels and the boundary becomes a **quadratic** curve — an ellipse, parabola,
+  or hyperbola — that can wrap around a class. `QuadraticDiscriminantAnalysis`.
+
+So the same generative recipe yields a linear classifier or a curved one purely from how many
+covariance matrices you let it estimate. The lab draws both: LDA's straight boundary on the mangoes,
+and — when the two classes have genuinely different covariance shapes — QDA's curve succeeding where
+LDA's line cannot.
+
+::: {.callout-note title="Deep Dive: why a shared covariance gives a straight line (Optional)" collapse="true"}
+
+Taking the log of $P(x \mid C)\,P(C)$ for a Gaussian gives a term
+$-\tfrac{1}{2}(x - \mu_C)^{\top} \Sigma_C^{-1} (x - \mu_C)$ plus constants. The boundary between two
+classes is where their log-scores are equal. With **per-class** $\Sigma_C$ the quadratic term
+$x^{\top}\Sigma_C^{-1}x$ differs between the classes and survives the subtraction — a quadratic
+boundary (QDA). With a **shared** $\Sigma$ that quadratic term is identical for both classes and
+**cancels**, leaving only terms linear in $x$ — a straight boundary (LDA). One shared matrix versus
+one per class is the whole difference between a line and a curve. The algebra belongs to a
+statistical-learning course; the cancellation is the idea.
+:::
+
+## The Duality: A Generative Route to a Line
+
+Look at what LDA produces: a linear boundary — the same kind of object logistic regression (L04) and
+the Perceptron (L05) draw. Three methods, one shape, reached three ways: the Perceptron by chasing
+mistakes, logistic regression by maximizing likelihood of the labels, LDA by modeling each class as a
+Gaussian and applying Bayes' rule. On well-behaved data they often land on nearly the **same** line —
+the lab checks that LDA and logistic agree on every test fruit. Naive Bayes (L07) is the other
+generative classifier: it keeps Bayes' rule but, instead of GDA's full covariance, assumes the
+features are independent — a different bet about $P(x \mid C)$, for a different kind of data.
+
+## When to Use / When NOT to Use
+
+- **Use it when:** features are roughly continuous and bell-shaped per class; you want a fast,
+  closed-form classifier (no iteration); you value the bonus that the model *describes* each class.
+- **Prefer LDA over QDA when** data is limited — one shared covariance is far fewer numbers to
+  estimate than one per class, so QDA's extra flexibility costs data. There is a flexibility ladder
+  here: a linear model (logistic, LDA) is the steady choice, QDA the flexible one that needs more
+  data per class — the bias-variance trade Unit III makes precise (L09).
+- **Avoid it when:** the per-class distributions are far from Gaussian, or strongly multi-modal — the
+  single-bell-per-class assumption misleads.
+
+## Common Pitfalls
+
+- **Reaching for QDA by default.** Per-class covariances mean many more parameters; on small classes
+  those estimates are noisy and QDA can lose to the simpler LDA. Match the model's flexibility to the
+  data you have.
+- **Forcing Gaussian on the wrong features.** Counts, categories, and heavy-tailed variables are not
+  bell curves; a generative model with the wrong likelihood is confidently wrong. (Naive Bayes, L07,
+  offers count-friendly likelihoods.)
+- **Confusing "discriminant analysis" with "discriminative."** Despite the name, LDA/QDA are
+  **generative** — they model each class. The word "discriminant" is historical.
+
+## FAQ / Industry Reality
+
+**"GDA or logistic regression?"** — They cost minutes; professionals often try both. Reach for LDA
+when classes look roughly Gaussian, data is limited, or you want the closed-form speed and the
+class-description bonus; prefer logistic regression when you have data to spare and want a model that
+optimizes the boundary directly without a Gaussian assumption. On clean, Gaussian-ish data with a
+shared covariance the two give nearly the same linear boundary — which is the duality this lesson is
+built around.
+
+**"LDA or QDA?"** — Start with LDA. It assumes one shared covariance, so it estimates far fewer
+numbers and is steadier when classes are small. Move to QDA only when you have evidence the classes
+have genuinely different spreads or orientations *and* enough data per class to estimate each
+covariance — the lab shows a case where that switch lifts accuracy from 0.68 to 0.88.
+
+**"Why assume a Gaussian at all?"** — Because two numbers per feature (a mean and a spread), plus the
+correlations, summarize a class cheaply and train instantly, and for many continuous measurements the
+bell curve is a decent approximation. When it is a bad one, you switch likelihoods (Naive Bayes for
+counts/text, L07) or switch to a discriminative model that never makes the assumption.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Bayes' rule | posterior $\propto$ prior $\times$ likelihood |
+| MAP rule | predict the class with the largest prior $\times$ likelihood |
+| Generative | model each class $P(x \mid C)$ and $P(C)$, then apply Bayes' rule |
+| GDA | model each class as a multivariate Gaussian (mean + covariance) |
+| Covariance | captures how features vary together — the tilt a single spread misses |
+| LDA | one **shared** covariance $\Rightarrow$ a **linear** boundary |
+| QDA | a **per-class** covariance $\Rightarrow$ a **quadratic** boundary |
+| Duality | LDA's line is the generative route to what logistic/Perceptron draw |
+
+## Where to Go Deeper
+
+- **Course text:** James et al., *An Introduction to Statistical Learning*, ch. 4 — LDA, QDA, and
+  Naive Bayes side by side with logistic regression (the gentler cousin of the syllabus's *Elements
+  of Statistical Learning*).
+- **Docs:** [scikit-learn's discriminant analysis guide](https://scikit-learn.org/stable/modules/lda_qda.html)
+  — `LinearDiscriminantAnalysis`, `QuadraticDiscriminantAnalysis`, and their assumptions.
+- **Lecture notes:** Stanford CS229, *Generative Learning Algorithms* — GDA derived (and contrasted
+  with logistic regression), the source the course syllabus credits.

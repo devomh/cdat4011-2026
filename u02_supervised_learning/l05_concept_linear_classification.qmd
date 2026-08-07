@@ -1,0 +1,228 @@
+---
+title: "Linear Models for Classification: Separating Hyperplanes and the Perceptron"
+unit: "II"
+lesson: "05"
+type: concept
+tags: [classification, perceptron, separating-hyperplane, linear-classifier, discriminative-generative, multiclass]
+difficulty: introductory
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** a linear classifier as a separating hyperplane — a line or plane $w \cdot x + b = 0$
+  whose side decides the class. *(Understand)*
+- **Explain** the Perceptron learning rule and **analyze** its convergence: guaranteed on linearly
+  separable data, never settling otherwise. *(Understand / Analyze)*
+- **Contrast** the ways a linear classifier can pick its line (perceptron, logistic, SVM) and the
+  multiclass strategies (one-vs-rest vs softmax). *(Analyze)*
+- **Distinguish** discriminative classifiers from generative ones — the split that the next two
+  lessons develop. *(Analyze)*
+- **Implement and train** a Perceptron from scratch and with scikit-learn. *(Apply — in the lab)*
+
+> **Where this sits:** after `L04 — Logistic Regression` · next: the generative view —
+> Gaussian discriminant analysis (L06).
+>
+> **Hands-on:** [Lab — The Perceptron](l05_lab_linear_classification.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u02_supervised_learning/l05_lab_linear_classification.ipynb)
+
+## Why This Matters
+
+L04 handed you *one* linear classifier — logistic regression. Step back and a pattern appears:
+a logistic model, a perceptron, a support vector machine — every linear classifier ends
+up drawing the **same kind of object**, a flat boundary that splits the feature space in two. This
+lesson names that object, the **separating hyperplane**, and meets the *original* algorithm that
+learns one from its mistakes: the **Perceptron** (Frank Rosenblatt, 1958). It matters twice over —
+as the conceptual root of every later linear classifier, and as the single "neuron" that, stacked
+into layers, becomes the neural networks of Unit V.
+
+::: {.callout-tip title="Analogy"}
+The Perceptron is a student who studies **only the problems they got wrong**. It checks each
+example; if it is already right it does nothing, and if it is wrong it nudges the boundary a little
+toward fixing that case. Repeat over the whole set, again and again — and *if a clean dividing line
+exists*, this stubborn habit is guaranteed to find one.
+:::
+
+## The Separating Hyperplane
+
+L04 ended on a key fact: logistic regression's decision boundary — the place where the label flips
+— is the set of points with linear score zero, $w \cdot x + b = 0$, which is a straight line in two
+features (a flat plane in three, a *hyperplane* in general). That object is the whole story of
+linear classification:
+
+- Compute a **score** $t = w \cdot x + b$ — a weighted sum of the features plus a bias.
+- The **sign** of the score is the prediction: one class when $t \geq 0$, the other when $t < 0$.
+- The boundary itself is where $t = 0$ — the separating hyperplane.
+
+Every linear classifier in this course — the Perceptron here, logistic regression (L04), the SVM
+(L08) — is *exactly this*: a choice of $w$ and $b$, i.e. a choice of hyperplane. What separates the
+methods is **how they choose it**.
+
+## The Perceptron Learning Rule
+
+The Perceptron predicts with a hard **step** instead of a smooth sigmoid:
+
+$$\hat{y} = \text{step}(w \cdot x + b) = \begin{cases} 1 & \text{if } w \cdot x + b \geq 0 \\ 0 & \text{otherwise} \end{cases}$$
+
+It learns by walking through the training points and reacting **only to its mistakes**. For each
+point $(x, y)$ it predicts $\hat{y}$ and applies the update
+
+$$w \leftarrow w + \eta\,(y - \hat{y})\,x, \qquad b \leftarrow b + \eta\,(y - \hat{y})$$
+
+where $\eta$ is a small **learning rate**. Read the rule case by case and it is almost obvious:
+
+- **Correct** ($y = \hat{y}$): the term $(y - \hat{y})$ is zero — no change.
+- **Should have said 1, said 0** ($y - \hat{y} = +1$): add a multiple of $x$ to $w$, tilting the
+  boundary *toward* calling this point positive next time.
+- **Should have said 0, said 1** ($y - \hat{y} = -1$): subtract — tilt the other way.
+
+Each mistake nudges the line a little in the direction that would fix *that* point. That is the
+entire algorithm:
+
+```{mermaid}
+flowchart LR
+  X["next point (x, y)"] --> S["score t = w . x + b"]
+  S --> P["predict y-hat = step(t)"]
+  P --> C{"mistake?<br/>(y-hat != y)"}
+  C -->|no| X
+  C -->|yes| U["nudge the line:<br/>w += eta (y - y-hat) x<br/>b += eta (y - y-hat)"]
+  U --> X
+```
+
+Note the contrast with L03 and L04: gradient descent minimizes a *smooth* loss (MSE, log loss) by
+following its slope. The Perceptron has no smooth loss — it just corrects mistakes. That difference
+is exactly what gives it its famous strength *and* its famous weakness.
+
+## Convergence: Its Strength and Its Limit
+
+The **Perceptron convergence theorem** says: if the two classes are **linearly separable** — some
+hyperplane splits them perfectly — then the mistake-driven rule reaches zero training errors in a
+*finite* number of passes. The lab watches this happen: the error count falls to zero and the
+updates stop.
+
+The flip side is just as important. If the classes are **not** linearly separable — they overlap,
+so no single line can split them — the Perceptron **never settles**. There is always some
+misclassified point demanding a nudge, so the boundary keeps moving forever; where you happen to
+stop it is arbitrary. The lab shows this too: on overlapping data the error count bounces around
+and never reaches zero.
+
+::: {.callout-note title="Deep Dive: why separable data converges (Optional)" collapse="true"}
+
+The classic proof bounds the number of updates by $(R/\gamma)^2$, where $R$ is the radius of the
+data (how far the farthest point sits from the origin) and $\gamma$ is the **margin** (how wide the
+gap is between the classes for the best separating hyperplane). Each mistake moves $w$ a controlled
+amount *toward* a true separator while the squared length of $w$ can only grow so fast; the two
+facts squeeze the update count to a finite number. A wider margin (bigger $\gamma$) means faster
+convergence. The full derivation belongs to a learning-theory text; what you need here is the
+consequence: **separable means finite; non-separable means forever.**
+:::
+
+## One Boundary, Many Ways to Choose It
+
+On separable data the Perceptron finds *a* separating line — the first one its corrections land on.
+But many lines separate the same data, and the Perceptron has no preference among them. Other linear
+classifiers do, and that preference is what defines them:
+
+| Method | How it picks the separating hyperplane | Where |
+|--------|----------------------------------------|-------|
+| **Perceptron** | any line that separates — it stops at the first one mistakes lead it to | this lesson |
+| **Logistic regression** | the maximum-likelihood line — the one giving the best-calibrated probabilities | L04 |
+| **Support vector machine** | the maximum-margin line — the one with the widest gap to the nearest points | L08 |
+
+Same object, three different rules for choosing it. The lab makes the Perceptron's indifference
+concrete: change the order it sees the points and it converges on a *different* perfect line.
+
+## Multiclass: One-vs-Rest and Softmax
+
+A single hyperplane splits *two* classes. For $K$ classes there are two standard moves:
+
+- **One-vs-rest** — train $K$ separate binary classifiers ("class $k$ or not"), then for a new point
+  pick the class whose classifier is most confident. scikit-learn's `Perceptron` does this
+  automatically for more than two classes.
+- **Softmax** — one model with one score per class, turned into probabilities that sum to 1 (L04).
+
+One-vs-rest reuses any binary classifier as a black box; softmax is a single, jointly-trained model.
+Both are in daily use; softmax is the one that reappears as the last layer of every classification
+network in Unit V.
+
+## Discriminative vs Generative: The Bridge to L06-L07
+
+The Perceptron, logistic regression, and the SVM all answer the question *"which side of the
+boundary is this point on?"* directly. They model $P(y \mid x)$ — or just the boundary — and never
+ask what a class *looks like*. These are **discriminative** classifiers.
+
+The next two lessons take the opposite route. **Generative** classifiers model each class
+separately — what a typical example of class $k$ looks like, $P(x \mid y = k)$ — and then use Bayes'
+rule to turn that around into a prediction.
+
+| | Discriminative | Generative |
+|--|----------------|------------|
+| **Models** | the boundary / $P(y \mid x)$ directly | each class $P(x \mid y)$, then Bayes' rule |
+| **Asks** | "which side of the line?" | "which class does this most look like?" |
+| **Examples** | Perceptron, logistic regression, SVM | Gaussian discriminant analysis (**L06**), Naive Bayes (**L07**) |
+
+Same goal — a label — reached from opposite directions. Keeping the distinction straight is what
+makes the next two lessons click into place.
+
+## When to Use / When NOT to Use
+
+- **Use a linear classifier when:** the classes are roughly separable by a line/plane; you want a
+  fast, interpretable model (one weight per feature); you need a strong baseline.
+- **Avoid the bare Perceptron when:** you actually want probabilities (use logistic regression) or
+  the single best-margin boundary (use the SVM); or when the data is not linearly separable, where
+  it will never converge. In practice the Perceptron is taught for *understanding*, not deployed —
+  but understanding it is the price of admission to neural networks (L14).
+
+## Common Pitfalls
+
+- **Expecting convergence on overlapping data.** If the classes are not linearly separable, the
+  Perceptron loops forever; "more epochs" will not help. Cap the epochs and switch to a model built
+  for overlap (logistic, SVM).
+- **Reading a Perceptron line as *the* answer.** It found *a* separator, not the best one. A
+  different point order gives a different line. When the specific boundary matters, use the SVM's
+  max-margin choice (L08).
+- **Confusing discriminative with generative.** A linear classifier draws a boundary; it does not
+  describe the classes. "What does a typical class-1 example look like?" is a generative question
+  (L06-L07), and a Perceptron cannot answer it.
+
+## FAQ / Industry Reality
+
+**"Is the Perceptron obsolete?"** — As a standalone classifier, mostly yes — logistic regression
+and SVMs beat it on the jobs it was built for. But it is far from a museum piece: a single neuron in
+a modern network *is* a perceptron with a smooth activation, and the whole of Unit V is built by
+stacking and training them. Learn it here and the neural networks later are not a new idea, just a
+deep one.
+
+**"Perceptron or logistic regression?"** — Logistic, almost always: it gives probabilities, it
+handles overlap gracefully, and it converges on a principled (max-likelihood) line rather than an
+arbitrary one. The Perceptron's value is conceptual — the simplest thing that *learns* a linear
+boundary, and the clearest place to see the mistake-driven idea.
+
+**"Why does overlapping data never converge?"** — Because the rule only stops when there are zero
+mistakes, and if no line can separate the classes, there is always at least one mistake left to
+chase. It is not a bug or a bad learning rate — it is the theorem's contrapositive. Smooth-loss
+models (logistic) and max-margin models (SVM) were designed precisely to do something sensible when
+perfect separation is impossible.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Separating hyperplane | $w \cdot x + b = 0$; the sign of the score is the class |
+| Linear classifier | a choice of hyperplane; methods differ in *how* they choose it |
+| Perceptron rule | correct on mistakes only: $w \mathrel{+}= \eta(y - \hat{y})x$ |
+| Convergence | separable means finite passes; non-separable means never settles |
+| Pick-the-line | perceptron (any) · logistic (max-likelihood) · SVM (max-margin) |
+| Multiclass | one-vs-rest ($K$ binary models) or softmax (one model) |
+| Discriminative vs generative | learn the boundary $P(y\mid x)$ vs model each class $P(x\mid y)$ |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning* — the Perceptron in the neural-networks
+  chapter (ch. 10), which is exactly the L14 connection this lesson promises.
+- **Docs:** [scikit-learn's Perceptron guide](https://scikit-learn.org/stable/modules/linear_model.html#perceptron)
+  — and its note that the Perceptron is a special case of the more general linear models.
+- **Text, deeper:** James et al., *An Introduction to Statistical Learning*, ch. 4 and ch. 9 — linear
+  classifiers and the max-margin idea that the SVM (L08) makes precise.

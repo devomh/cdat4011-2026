@@ -1,0 +1,7 @@
+# Global placeholder — single source of truth for the PUBLIC content repo coordinates.
+# Referenced from .qmd via {{< var repo.org >}} etc.; skills generate (never hardcode)
+# URLs in .ipynb from these values. See the repo-level _design/delivery_spec.md §4.
+repo:
+  org: "devomh"         # GitHub org/user of the public content repo
+  name: "cdat4011-2026"  # public repo name (per-course, decision 0018)
+  branch: "main"

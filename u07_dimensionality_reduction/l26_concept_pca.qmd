@@ -1,0 +1,224 @@
+---
+title: "Principal Component Analysis"
+unit: "VII"
+lesson: "26"
+type: concept
+tags: [unsupervised-learning, dimensionality-reduction, pca, svd, scikit-learn]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Explain** the **curse of dimensionality** and dimensionality reduction by **projection**: real
+  data lies near a low-dimensional subspace, so axes carrying little variance can be dropped.
+  *(Understand)*
+- **Explain** PCA -- it finds orthogonal **principal components** (the axes of maximum variance, via
+  the **SVD** of the centered data), ordered by the variance they capture. *(Understand)*
+- **Apply** `PCA` with scikit-learn: `fit_transform` to project, `explained_variance_ratio_` to read
+  variance, and `n_components` to keep a target fraction (95% -> 28 of 64 on the digits). *(Apply)*
+- **Analyze** the compression trade-off -- a classifier on 28 components nearly matches all 64 (0.954
+  vs 0.957), and **reconstruction** error falls as `d` grows. *(Analyze)*
+- **Relate** PCA to an autoencoder (PCA = a linear autoencoder: project = encode, reconstruct =
+  decode) and read its mechanism as the SVD of the centered matrix. *(Understand / Analyze)*
+
+> **Where this sits:** this lesson **opens Unit VII (Dimensionality Reduction)**. Units I-V learned
+> models; Unit VI grouped the **rows** (clustering); Unit VII reduces the **columns**. PCA closes the
+> loop `L20 — Autoencoders` opened: an autoencoder is the *nonlinear generalization of PCA*, so PCA is
+> "the linear autoencoder." · next: `L27 — Factor Analysis & ICA` (more dimensionality reduction).
+> Back to **scikit-learn**.
+>
+> **Hands-on:** [Lab — Compressing Digits with PCA](l26_lab_pca.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u07_dimensionality_reduction/l26_lab_pca.ipynb)
+
+## Why This Matters
+
+A handwritten-digit image in the lab is 64 numbers -- an 8x8 grid of pixels. But you do not need all
+64 to tell a 3 from an 8: the border pixels are almost always blank, and neighbouring pixels move
+together. Most of those 64 dimensions are nearly redundant.
+
+That redundancy is the rule, not the exception, and it matters because high-dimensional space is
+mostly **empty**. As you add features, points spread out exponentially, every point becomes far from
+every other, models overfit, and training slows -- the **curse of dimensionality**. The escape is that
+real data almost always lies near a much lower-dimensional **subspace**. **Principal Component
+Analysis** finds that subspace -- the handful of directions along which the data actually varies -- and
+projects onto it. On the digits, 2 of the 64 axes already separate the classes by eye, and 28 capture
+95% of everything, with a classifier on those 28 nearly as accurate as on all 64.
+
+::: {.callout-tip title="Analogy"}
+Photographing a crowd, you instinctively stand where the people are most **spread out** -- a side angle
+where everyone is visible, not an end-on view where they hide behind each other. PCA picks that angle
+automatically: its first principal component is the direction of greatest spread (variance), the
+second is the best remaining direction at right angles to it, and so on. Keep the first few angles and
+you have a flat photo that still tells the crowd apart; throw away the rest and you lose almost
+nothing, because along those directions everyone already looked the same.
+:::
+
+## The Curse of Dimensionality
+
+Add dimensions and intuition breaks. In high-D space, randomly scattered points are almost all far
+apart and near the edges of the region they occupy, so any new point sits far from your training data
+-- a prediction becomes a long extrapolation, and the model is more likely to overfit. Reaching a fixed
+data density needs exponentially more samples as dimensions grow, which is hopeless in practice.
+
+The saving grace is the **manifold assumption**: real high-dimensional datasets tend to lie close to a
+much lower-dimensional surface inside that space. Digit images do not fill all of 64-D pixel space --
+they cluster on a thin sheet of "things that look like digits." **Dimensionality reduction** finds a
+low-dimensional representation; the simplest kind is a **projection** onto a flat subspace, and PCA
+chooses the best flat subspace there is.
+
+## Principal Component Analysis
+
+PCA identifies the axis along which the data has the **largest variance**, then the axis orthogonal to
+it with the largest *remaining* variance, and so on -- one **principal component** per original
+dimension, ordered by variance captured. To reduce to `d` dimensions, keep the first `d` components
+and **project** the (centered) data onto them:
+
+$$
+\mathbf{X}_{d} = \mathbf{X}_c \, \mathbf{W}_d
+$$
+
+where $\mathbf{X}_c$ is the mean-centered data and $\mathbf{W}_d$ holds the first `d` components as its
+columns. The components come from the **singular value decomposition** of the centered matrix:
+
+$$
+\mathbf{X}_c = \mathbf{U}\,\mathbf{\Sigma}\,\mathbf{V}^{\top}, \qquad
+\text{principal components} = \text{rows of } \mathbf{V}^{\top}
+$$
+
+and each component's variance is its squared singular value over $m-1$. (scikit-learn centers the data
+for you; you do not center it yourself.)
+
+```{mermaid}
+flowchart LR
+  A["Center the data<br/>(subtract the mean)"] --> B["SVD of the centered matrix:<br/>orthogonal axes of max variance"]
+  B --> C["Order components<br/>by variance captured"]
+  C --> D["Keep the top d<br/>(e.g. 95% of variance)"]
+  D --> E["Project the data<br/>onto those d axes"]
+```
+
+`explained_variance_ratio_` reports the fraction of total variance each component holds. On the lab's
+digits the first two components hold 0.146 and 0.137 -- together 28% of everything in just 2 of 64
+axes, enough to plot the classes and see them separate.
+
+## Choosing the Number of Components
+
+For visualization you take 2 or 3 components. For compression, instead of guessing, pick the number
+that preserves a target fraction of the variance. Take the **cumulative** sum of
+`explained_variance_ratio_` and find where it crosses, say, 0.95:
+
+| Variance kept | Components (of 64) |
+|---------------|-------------------:|
+| 80% | 13 |
+| 90% | 21 |
+| **95%** | **28** |
+| 99% | 41 |
+
+So 95% of the digits' variance survives in **28** of the 64 dimensions. You can read this off the
+cumulative curve, or just pass the fraction directly: `PCA(n_components=0.95)` returns 28 components.
+The diminishing return is visible in the table -- the first 13 components buy 80%, but the last 4% of
+variance (95% -> 99%) costs another 13, because the tail components each carry almost nothing.
+
+## Reconstruction and the Compression Trade-off
+
+A projection is **lossy**: `inverse_transform` maps the `d`-dimensional code back to the original
+space, but it returns an approximation. The reconstruction error measures the loss, and it falls as
+`d` grows -- 13.4 (MSE) at 2 components, 0.935 at 28, exactly 0 at the full 64. The reconstructed
+digits at 28 components are visibly the same numbers, only smoothed.
+
+What you keep is the **predictive signal**. In the lab a logistic-regression classifier scores 0.957
+on all 64 raw features and **0.954** on the 28 PCA components -- a 0.003 drop for less than half the
+dimensions -- and the accuracy-vs-components curve (0.600 at 2, 0.924 at 10, 0.954 at 28) shows the
+signal concentrates in the first couple dozen components. Fewer features also means a smaller, faster
+model, less prone to overfitting. That is why PCA is a standard **preprocessing** step, not just a
+plotting trick.
+
+::: {.callout-note title="Deep Dive: PCA is a linear autoencoder (Optional)" collapse="true"}
+
+`L20 — Autoencoders` introduced a network that compresses its input through a narrow bottleneck and
+reconstructs it, and named PCA as its linear cousin. Now the loop closes. PCA *is* an autoencoder
+whose encoder and decoder are both **linear**:
+
+- **Encode:** project onto the components, $\mathbf{z} = \mathbf{X}_c \mathbf{W}_d$ (the bottleneck is
+  the `d`-dimensional code).
+- **Decode:** reconstruct, $\hat{\mathbf{X}} = \mathbf{z}\,\mathbf{W}_d^{\top}$ (plus the mean).
+
+Minimizing the reconstruction error over all *linear* encoders/decoders gives exactly the top `d`
+principal components. An autoencoder generalizes this by letting the encoder and decoder be nonlinear
+networks, so it can bend around curved (manifold) structure that PCA's straight-line projection
+misses -- at the cost of training a network instead of taking one SVD. PCA is the fast, closed-form,
+linear special case.
+:::
+
+## When to Use PCA
+
+```{mermaid}
+flowchart TD
+  S{"Why reduce<br/>the dimensions?"}
+  S -- "plot high-D data" --> V["PCA to 2-3 components<br/>(visualization)"]
+  S -- "speed up / regularize<br/>a downstream model" --> C["PCA keeping 95-99%<br/>of the variance"]
+  S -- "the structure is a curved,<br/>twisted manifold" --> M["nonlinear methods:<br/>t-SNE, LLE (L27)"]
+```
+
+PCA is the first thing to reach for: it is fast (a single SVD), closed-form, and interpretable. Its
+limits set up the rest of Unit VII -- it is **linear**, so it cannot unroll a curved manifold (that is
+t-SNE and LLE, L27), and it assumes the directions of **most variance are the most useful**, which is
+not always true (a tiny-variance direction can carry the label).
+
+## Common Pitfalls
+
+- **Forgetting to scale features on different units.** PCA chases variance, so a feature measured in
+  large units (grams vs kilograms) dominates the components purely because its numbers are bigger.
+  Standardize first when scales differ. (The digits are all 0-16, so the lab does not scale them.)
+- **Assuming variance equals signal.** PCA keeps the highest-variance directions, but the class
+  information can live in a low-variance direction it discards. Variance is a useful default, not a
+  guarantee.
+- **Treating reconstruction as lossless.** Any `d < n` loses information; check the reconstruction
+  error or the explained-variance ratio to know how much.
+- **Expecting PCA to unroll a curved manifold.** PCA is a *linear* projection -- it cannot follow a
+  Swiss-roll twist. Use a manifold method (t-SNE, LLE -- L27) for that.
+- **Running PCA on data you forgot to center.** scikit-learn centers for you, but a hand-rolled SVD
+  must subtract the mean first, or the first component just points at the mean.
+
+## FAQ / Industry Reality
+
+**"How many components should I keep?"** -- For a plot, 2 or 3. For preprocessing, keep a variance
+target (95-99%) with `PCA(n_components=0.95)`, or treat `n_components` as a hyperparameter and tune it
+by cross-validation against your downstream model.
+
+**"Do I scale before PCA?"** -- If your features are on different units or ranges, yes -- standardize
+first, or the largest-numbered feature hijacks the components. If they share a scale (like pixel
+intensities), centering (which PCA does for you) is enough.
+
+**"What is randomized PCA?"** -- `svd_solver="randomized"` approximates the top `d` components with a
+stochastic algorithm that is far faster than a full SVD when `d` is much smaller than the number of
+features. scikit-learn picks it automatically on large data; same result, less time.
+
+**"When is PCA the wrong tool?"** -- When the structure is nonlinear (a curved manifold) -- use t-SNE
+or LLE (L27) -- or when the useful signal sits in a low-variance direction PCA would drop.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Curse of dimensionality | high-D space is sparse -> overfitting, slow training; reduce dimensions |
+| PCA | project onto the orthogonal axes of maximum variance (the principal components) |
+| Mechanism | the SVD of the centered data; components = rows of V^T, variance = singular value^2/(m-1) |
+| `explained_variance_ratio_` | fraction of total variance each component holds |
+| Choosing d | cumulative variance to a target: 95% -> 28 of 64 (or `PCA(n_components=0.95)`) |
+| Compression payoff | classifier 0.954 (28 comps) vs 0.957 (64) -- nearly free, smaller + faster |
+| Reconstruction | `inverse_transform`; lossy, MSE falls with d (13.4 -> 0.935 -> 0) |
+| PCA vs autoencoder | PCA = linear autoencoder; an autoencoder is the nonlinear generalization |
+| Limits | linear (no curved manifolds -> t-SNE/LLE, L27); assumes variance = signal; scale first |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 8 -- the PCA sections (projection, the
+  manifold assumption, explained variance, choosing dimensions, reconstruction, randomized PCA) this
+  lesson follows.
+- **Docs:** [scikit-learn's decomposition guide](https://scikit-learn.org/stable/modules/decomposition.html#pca)
+  -- `PCA`, `n_components` as a fraction, the SVD solvers, and `inverse_transform`.
+- **Visual intuition:** the [setosa.io PCA explainer](https://setosa.io/ev/principal-component-analysis/)
+  -- an interactive view of components as the axes of maximum spread.

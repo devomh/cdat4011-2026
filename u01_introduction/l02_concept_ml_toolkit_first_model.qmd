@@ -1,0 +1,153 @@
+---
+title: "The ML Toolkit and Your First Model"
+unit: "I"
+lesson: "02"
+type: concept
+tags: [tooling, scikit-learn, colab, uv, workflow]
+difficulty: introductory
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Identify** the four libraries of the scientific-Python stack (NumPy, pandas, matplotlib, scikit-learn) and the role each plays. *(Understand)*
+- **Describe** the scikit-learn `fit` / `predict` / `score` API as the single interface shared by every model. *(Understand)*
+- **Train and evaluate** a first classifier with the split-fit-score workflow on Colab. *(Apply — in the lab)*
+- **Interpret** test accuracy and **explain** why a model is scored on held-out data. *(Analyze — in the lab)*
+
+> **Where this sits:** after `L01 — What Is Machine Learning?` · next: supervised learning,
+> starting with linear regression (Unit II). Closes Unit I.
+>
+> **Hands-on:** [Lab — Your First Model](l02_lab_ml_toolkit_first_model.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u01_introduction/l02_lab_ml_toolkit_first_model.ipynb)
+
+## Why This Matters
+
+L01 gave you the map — the paradigms, the workflow, and the mathematics underneath. This
+lesson hands you the **tools that do the work**: the few Python libraries every ML project
+leans on, the cloud notebook you will run them in, and the one three-line pattern that trains
+*any* model. By the end you will have trained and graded a real classifier — before the course
+has taught you a single algorithm. That is deliberate: feel the workflow first, open the
+algorithms later.
+
+This lesson assumes you can already program in Python (your COMP 3082 background). We are not
+teaching the language — we are teaching the **ML toolkit** built on top of it.
+
+## The Scientific Python Stack
+
+Machine learning in Python rests on four libraries, each with a clear job:
+
+| Library | What it gives you | You use it to... |
+|---------|-------------------|------------------|
+| **NumPy** | the `ndarray` — fast numerical arrays and vectorized math | hold and crunch numbers; it is what pandas and scikit-learn store data in underneath |
+| **pandas** | the `DataFrame` — a labeled table (rows = examples, columns = features) | load, clean, and select your data; a dataset *is* a `DataFrame` |
+| **matplotlib** | plotting | look at the data before and after modeling (always plot first) |
+| **scikit-learn** | the classic-ML algorithms behind one uniform API | split data, train models, score them |
+
+You met the idea in L01 — a dataset is a matrix of rows and columns. pandas is how that matrix
+becomes something you can load and slice; NumPy is the engine under it; scikit-learn is what
+turns it into a model.
+
+## The scikit-learn Estimator API
+
+The reason scikit-learn is the backbone of this course is **consistency**: every model — a
+nearest-neighbor classifier, linear regression, a support vector machine — is an *estimator*
+that speaks the same three verbs.
+
+```python
+from sklearn.neighbors import KNeighborsClassifier
+
+model = KNeighborsClassifier(n_neighbors=5)   # 1. choose a model
+model.fit(X_train, y_train)                   # 2. fit:     learn from training data
+predictions = model.predict(X_test)           # 3. predict: label new data
+accuracy    = model.score(X_test, y_test)     #    score:   grade against known answers
+```
+
+::: {.callout-note}
+**`fit` / `predict` / `score` is the whole interface.** Swap `KNeighborsClassifier` for
+`LinearRegression` or `SVC` and these lines do not change. Learn the pattern once and every
+later lesson reuses it — which is exactly why we can train a model today and *understand* it
+later.
+:::
+
+One rule comes with the API and never leaves: **`fit` on the training data, `score` on the
+held-out test data.** A model graded on the same examples it learned from is grading itself on
+its own study sheet — the number flatters it. You will feel this directly in the lab, where a
+hand-written rule that scores itself looks better than it is.
+
+## The Runtime: Google Colab and the Setup Cell
+
+The labs run in **Google Colab** — a free, in-browser Jupyter notebook with the scientific
+stack preinstalled and no setup on your machine. Open the notebook from the **Colab badge** on
+each concept page (the badge above opens this lesson's lab).
+
+Colab **resets to a clean machine every time you open a notebook**, so each lab is
+**self-contained**: it carries its own setup. That setup is deliberately **two cells**:
+
+1. **An install-only cell** (`%pip install ...`) — run once.
+2. **An imports + seed + data cell** — imports the libraries, fixes the random seed (so your
+   numbers match everyone else's), and builds the data.
+
+Splitting them means that when you re-run the imports while experimenting — which you will do
+constantly — you do **not** re-trigger the install. Use `%pip` (not `!pip`): the `%` magic
+installs into the *running* kernel.
+
+::: {.callout-tip title="Why a fixed seed?"}
+Every lab calls `np.random.default_rng(11)` before generating data. Seeding the random number
+generator makes the synthetic data — and therefore every accuracy you compute — **identical
+for everyone**, so your result and the expected output can be compared exactly.
+:::
+
+## Reproducible Local Environments with `uv`
+
+Colab is the default, but you will sometimes want to run locally. The modern, fast way to get
+a reproducible Python environment is [`uv`](https://docs.astral.sh/uv/) — a single tool that
+manages the interpreter, a virtual environment, and your dependencies, pinned in a lockfile so
+the project runs the same on any machine.
+
+```bash
+uv init coqui-lab          # create a project (pyproject.toml + a pinned environment)
+uv add scikit-learn numpy pandas matplotlib   # add dependencies, locked
+uv run jupyter lab         # run inside the project's environment
+```
+
+That is the local mirror of Colab's install cell: `uv add scikit-learn` does locally what
+`%pip install scikit-learn` does in the notebook — the difference is that `uv` **locks** the
+versions, so "works on my machine" becomes "works on every machine."
+
+## FAQ / Industry Reality
+
+**"Do I have to install anything to start?"** — No. Colab has the whole stack preinstalled;
+the install cell is there to model the pattern (and to add anything Colab lacks). Local `uv`
+is for when you want the project on your own machine.
+
+**"pandas or NumPy — which do I reach for?"** — pandas for *tables* (loading, cleaning,
+selecting columns), NumPy for *numbers* (arrays and math). In practice you use pandas to
+prepare the data and hand the numeric part to scikit-learn, which works in NumPy underneath.
+
+**"Is k-Nearest-Neighbors important?"** — Not as a topic here; we use it as a **black box** —
+the simplest thing that has a `fit`/`predict`/`score` interface — so you can run the workflow
+before any algorithm is taught. We never derive it; Unit II opens with models we *do* derive.
+
+## Summary / Cheat-sheet
+
+| Thing | The one-liner |
+|-------|---------------|
+| NumPy / pandas | numbers (`ndarray`) / labeled tables (`DataFrame`) |
+| matplotlib | plot first, always |
+| scikit-learn | models behind one API |
+| The recipe | `model.fit(X_train, y_train)` · `model.predict(X)` · `model.score(X_test, y_test)` |
+| Golden rule | fit on training data, score on held-out test data |
+| Colab | preinstalled stack; resets on open, so labs carry a two-cell setup |
+| `uv` | reproducible *local* environments (locked dependencies) |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 2 — the end-to-end project that this
+  lesson's workflow is a miniature of.
+- **Docs:** [scikit-learn — Getting Started](https://scikit-learn.org/stable/getting_started.html)
+  — the `fit` / `predict` vocabulary you will use in every lab.
+- **Docs:** [`uv` documentation](https://docs.astral.sh/uv/) — projects, dependencies, and
+  reproducible environments.

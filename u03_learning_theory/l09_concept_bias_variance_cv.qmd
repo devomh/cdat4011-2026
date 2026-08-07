@@ -1,0 +1,267 @@
+---
+title: "The Bias-Variance Dilemma and Cross-Validation"
+unit: "III"
+lesson: "09"
+type: concept
+tags: [bias-variance, overfitting, underfitting, cross-validation, model-selection]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** underfitting and overfitting as the two ends of a flexibility dial,
+  and the bias-variance dilemma behind them. *(Understand)*
+- **Diagnose** a model's position on that spectrum from its train-vs-validation
+  scores. *(Analyze)*
+- **Explain** why hyperparameters must never be tuned on the test set.
+  *(Understand)*
+- **Apply** k-fold cross-validation to choose a hyperparameter and report one
+  honest final score. *(Apply — in the lab)*
+
+> **Where this sits:** Unit III begins — after `L08 — Support Vector Machines`
+> closed Unit II's algorithms, this unit asks how to *trust* them · next:
+> `L10 — Regularization & Model/Feature Selection`.
+>
+> **Hands-on:** [Lab — Tuning Without Cheating](l09_lab_bias_variance_cv.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u03_learning_theory/l09_lab_bias_variance_cv.ipynb)
+
+## Why This Matters
+
+Two debts from earlier lessons come due today. In L02 you swept k = 1, 15, 51 and
+were told that choosing such knobs "gets a principled treatment in Unit III". In
+L08 you watched gamma=100 score 0.996 on training and 0.840 on test, and we named
+it *overfitting* — but we caught it by peeking at the test set, which (you are
+about to learn) is itself a methodological sin.
+
+This lesson pays both debts: **why** flexible models betray you, and **how** to
+set their dials without contaminating the one number you must keep honest.
+
+::: {.callout-tip title="Analogy"}
+Studying for an exam from past papers. Memorize the answer key word for word and
+you ace every past paper while failing the real exam — **overfitting**. Skim so
+casually you learn nothing and you fail both — **underfitting**. And if you "check
+your readiness" against the real final, then study some more, repeatedly — your
+eventual score proves nothing, because the final leaked into your studying. That
+last one is what tuning on the test set does.
+:::
+
+## The Flexibility Dial
+
+Every model family you have met carries at least one knob that sets how much the
+model can bend:
+
+| Model | Knob | More flexible when... |
+|-------|------|----------------------|
+| kNN (L02) | k | k is *small* (each prediction trusts one neighborhood) |
+| logistic regression (L04) | — (plain form) | a fixed, linear shape — the rigid baseline |
+| SVM (L08) | C, gamma, kernel | C large, gamma large, kernel nonlinear |
+
+These knobs are **hyperparameters**: settings *you* choose before fitting, as
+opposed to parameters (coefficients, support vectors) the algorithm learns from
+data. L02 used the word in passing; this lesson is its formal home. The question
+of the day: **where do you set the dial?**
+
+## Underfitting and Overfitting
+
+Turn any flexibility dial across its range and score the model twice — on the data
+it trained on, and on data it has never fit — and a universal pattern appears:
+
+| Position | Training score | Validation score | Diagnosis |
+|----------|---------------|------------------|-----------|
+| too flexible | excellent (even perfect) | clearly worse | **overfitting** — the model memorized noise |
+| sweet spot | good | nearly as good | what you want |
+| too rigid | mediocre | mediocre (converged with training) | **underfitting** — the model cannot express the pattern |
+
+The distance between the two scores is the **generalization gap**. Reread L08's
+gamma experiment as a worked diagnosis: gamma=100 gave train 0.996 / test 0.840 —
+a 0.156 gap, overfit; gamma=1 gave 0.960 / 0.893 — a healthy 0.067. The lab draws
+this table as a curve, with k as the dial.
+
+## Bias and Variance: Why the Dial Behaves This Way
+
+Two distinct sources of error sit behind that table.
+
+- **Bias** is systematic error from rigidity: the model family *cannot* represent
+  the true pattern, so it misses in the same direction no matter which training
+  sample you give it. A straight line through a curved boundary has high bias.
+- **Variance** is sensitivity to the draw: give the model a *different* random
+  training sample and it produces a noticeably different boundary. A k=1
+  classifier — whose boundary threads around every single training point — has
+  high variance: new sample, new thread.
+
+::: {.callout-note title="The dartboard picture"}
+Imagine refitting the same model family on many alternative training sets and
+plotting each fit's predictions as one dart. **High bias** = the darts cluster
+tightly in the *wrong* place (consistent, consistently off). **High variance** =
+the darts scatter widely around the right place (sometimes great, never
+dependable). Low bias *and* low variance — a tight cluster on the bullseye — is
+the goal, and for a fixed dataset the flexibility dial moves you along a trade:
+rigidity buys consistency at the cost of expressiveness; flexibility buys
+expressiveness at the cost of stability.
+:::
+
+That trade is the **bias-variance dilemma**: turning the dial toward flexibility
+lowers bias and raises variance; turning it back does the reverse. Total error
+carries both (plus noise nothing can remove — the formula is in the Deep Dive),
+so the best dial setting is wherever their *sum* bottoms out.
+
+## The U-Curve
+
+Plot validation error against flexibility and the dilemma becomes one picture: a
+**U**. The left wall (too rigid) is bias; the right wall (too flexible) is
+variance; the bottom of the U is the sweet spot. Training error, plotted
+alongside, climbs steadily toward the flexible end — small wiggles aside, it peaks
+at the most flexible setting — which is precisely why it cannot be used to choose:
+it always ends up voting for the most flexible model on offer.
+
+Honesty note: on easy or noisy data the U can be lopsided — the lab's coqui curve
+has a sharp overfitting cliff on the flexible side but only a shallow underfitting
+plateau on the rigid side. Diagnose from the *pattern of the two curves*, not from
+expecting a picture-perfect U.
+
+## Why You Cannot Tune on the Test Set
+
+The test set exists to answer exactly one question — *how will this model do on
+data nobody has seen?* — and it can only answer it **once**. The moment a
+hyperparameter is chosen *because* it scored best on the test set, the test set
+has participated in building the model: of all the candidates, you kept the one
+that best flattered those particular examples, part skill and part luck. The
+resulting score is inflated, and no honest number remains.
+
+::: {.callout-important}
+Treat the test set as a **sealed envelope**. Every decision — which model family,
+which hyperparameters, which features — must be made without it. It is opened
+once, at the end, and its verdict is final. Repeated "just checking" is the same
+leak in slow motion.
+:::
+
+So model selection needs held-out data that is *not* the test set — data the
+model didn't fit, drawn from inside the training set.
+
+## Validation Sets and k-Fold Cross-Validation
+
+The simple version: carve a **validation set** out of the training data (a
+three-way split: train / validation / test), fit candidates on the reduced
+training portion, compare them on the validation slice, keep the test envelope
+sealed. Its weakness on small datasets: which calls land in that one slice is a
+lottery — the lab measures a 0.178 accuracy spread across slices for the *same
+model*.
+
+**k-fold cross-validation** fixes the lottery by rotation: split the training
+data into k equal folds (5 is the workhorse), then run k rehearsals — each fold
+takes one turn as validator while the others train — and average the k scores:
+
+```{mermaid}
+flowchart LR
+  D["Training data<br/>(the test set is NOT here)"] --> F["Split into 5 folds"]
+  F --> R1["Rehearsal 1:<br/>validate on fold 1,<br/>train on folds 2-5"]
+  F --> R2["Rehearsal 2:<br/>validate on fold 2,<br/>train on folds 1, 3-5"]
+  F --> R3["... rehearsals 3-5,<br/>each fold validates once"]
+  R1 --> A["Average the 5 scores:<br/>the CV accuracy"]
+  R2 --> A
+  R3 --> A
+```
+
+Every training example gets to be validation data exactly once, no example ever
+validates a model it helped fit, and the average is far steadier than any single
+rehearsal. In scikit-learn this whole diagram is one call:
+`cross_val_score(model, X_train, y_train, cv=5)`.
+
+## The Model Selection Protocol
+
+The recipe the lab drills, worth memorizing as a unit:
+
+1. **Grid:** list candidate dial settings (k in {1, 3, 5, ...}).
+2. **Cross-validate** each candidate on the training data only.
+3. **Pick** the setting with the best mean CV score.
+4. **Refit** the winner on *all* the training data (the folds were rehearsals;
+   the performance uses every training example).
+5. **Open the envelope:** score the refit model on the test set, once. Report
+   that number.
+
+## When to Use / When NOT to Use
+
+- **Use CV when:** datasets are small-to-medium (where one validation split is a
+  lottery); whenever you compare hyperparameters or model families; whenever a
+  result is headed into a report.
+- **Think twice when:** training is very expensive (k folds = k retrainings —
+  deep networks in Unit V often fall back to a single validation split, made
+  viable by their huge datasets); data has time order (random folds leak the
+  future into the past — time-series splitting exists, out of scope here).
+
+## Common Pitfalls
+
+- **Tuning on the test set** — the headline sin; the lab runs the trap once,
+  labeled, so you recognize it (it "improved" 0.840 to 0.867, fictitiously).
+- **Peeking repeatedly.** Checking the test set after every tweak is tuning on it
+  in slow motion. One look, at the end.
+- **Panicking over CV-vs-test disagreement.** CV said 0.849, test said 0.840 —
+  both are estimates with sampling noise (look at the fold spread). Small gaps
+  are expected; investigate only when the gap is large.
+- **Forgetting the refit.** The CV winner was judged while trained on 4/5 of the
+  data; ship the version refit on all of it (protocol step 4).
+
+::: {.callout-note title="Deep Dive: the decomposition behind the dilemma (Optional)" collapse="true"}
+
+For squared-error prediction, the expected error of a model family at a point
+decomposes exactly:
+
+$$\mathbb{E}\big[(y - \hat{f}(x))^2\big] = \underbrace{\text{Bias}\big[\hat{f}(x)\big]^2}_{\text{systematic miss}} + \underbrace{\text{Var}\big[\hat{f}(x)\big]}_{\text{sample-to-sample wobble}} + \underbrace{\sigma^2}_{\text{irreducible noise}}$$
+
+The expectation runs over alternative training samples — the "many darts" of the
+dartboard picture. Bias is how far the *average* dart lands from the truth;
+variance is how scattered the darts are around their own average; $\sigma^2$ is
+the noise floor no model can beat (the coqui species genuinely overlap, so even
+the perfect classifier errs there). Flexibility moves error between the first two
+terms; nothing moves the third. The derivation is three lines of algebra from
+adding and subtracting $\mathbb{E}[\hat{f}(x)]$ — ISL ch. 2 walks it.
+:::
+
+## FAQ / Industry Reality
+
+**"Why not just use the most flexible model and lots of data?"** — More data
+genuinely is the antidote to variance: with enough examples, flexible models stop
+wobbling, which is the bet deep learning makes (Unit V). But data is never
+infinite, labeling is expensive, and for the dataset you actually have, the
+dilemma stands — which is why this lesson's machinery stays mandatory even in the
+deep-learning era.
+
+**"CV said 0.849 but the test said 0.840 — is cross-validation broken?"** — No;
+it would be suspicious if they matched exactly. Both numbers estimate the same
+unknown quantity from finite samples; the lab's fold scores ranged 0.733 to 0.911
+around their 0.849 mean. Read CV scores with error bars in mind, and treat
+small CV-vs-test gaps as the sampling noise they are.
+
+**"How many folds should I use?"** — 5 or 10 is the industry default and fine for
+this course. More folds means more retraining and smaller validation slices; the
+extreme — one fold per example — is leave-one-out CV, occasionally useful on tiny
+datasets, expensive everywhere else. (And when the grid of hyperparameters gets
+big, `GridSearchCV` automates the loop you wrote by hand in the lab — same
+protocol, less typing.)
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Hyperparameter | a dial you set before fitting (k, C, gamma) — not learned |
+| Overfitting | memorized the sample: big train-vs-validation gap |
+| Underfitting | too rigid for the pattern: both scores mediocre and converged |
+| Bias | systematic miss from rigidity |
+| Variance | boundary wobbles with the training draw |
+| The dilemma | flexibility lowers bias, raises variance; minimize the sum |
+| Test set | a sealed envelope, opened once, never used for choosing |
+| k-fold CV | k rehearsals, every fold validates once, average the scores |
+| Protocol | grid, CV, pick, refit on all training data, test once |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 2 — the end-to-end
+  project walkthrough whose validation discipline this lesson formalizes.
+- **Docs:** [scikit-learn's cross-validation guide](https://scikit-learn.org/stable/modules/cross_validation.html)
+  — `cross_val_score`, fold strategies, and the leakage warnings, all in one page.
+- **Text, deeper:** James et al., *An Introduction to Statistical Learning*,
+  ch. 5 (resampling) and ch. 2's bias-variance section — including the
+  decomposition the Deep Dive stated.

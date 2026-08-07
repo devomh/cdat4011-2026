@@ -1,0 +1,232 @@
+---
+title: "Classification with Logistic Regression: From Labels to Probabilities"
+unit: "II"
+lesson: "04"
+type: concept
+tags: [classification, logistic-regression, sigmoid, decision-boundary, log-loss, softmax]
+difficulty: introductory
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** the classification problem and its variants — binary, multiclass,
+  multilabel. *(Understand)*
+- **Explain** how the sigmoid turns a linear score into a probability and a threshold
+  turns that into a label, and **contrast** linear with logistic regression.
+  *(Understand)*
+- **Analyze** classifier output at the probability level — decision boundaries,
+  uncertain cases, threshold trade-offs. *(Analyze)*
+- **Train and evaluate** binary logistic regression and multiclass softmax in
+  scikit-learn. *(Apply — in the lab)*
+
+> **Where this sits:** after [linear regression](l03_concept_linear_regression.qmd) ·
+> next: linear classifiers and the Perceptron — L05 (Linear Models for Classification).
+>
+> **Hands-on:** [Lab — From Labels to Probabilities](l04_lab_logistic_regression.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u02_supervised_learning/l04_lab_logistic_regression.ipynb)
+
+## Why This Matters
+
+The coqui detector from L02 works — and the field team is unhappy with it anyway.
+Their kNN labels every recording with the same flat certainty, but the biologists'
+workflow runs on *confidence*: a detection they can trust gets filed automatically; a
+borderline one gets a human listen. "Which calls should we double-check?" is a
+question a bare label cannot answer.
+
+This lesson upgrades the detector's output from a label to a **probability** — and on
+the way, settles what classification problems look like and how a linear model can
+solve them.
+
+::: {.callout-tip title="Analogy"}
+A label is a verdict; a probability is a verdict **with the jury's vote count
+attached**. "Guilty, 7 votes to 5" and "guilty, 12 to 0" lead to very different
+appeals — and "portoricensis, p = 0.52" earns a human review that "p = 0.97" does not.
+:::
+
+## The Classification Problem
+
+Regression (L03) predicts a quantity. Classification predicts a **category** — and
+the structure of the output sorts the problems into three variants:
+
+| Variant | The output is... | Fresh example |
+|---------|------------------|---------------|
+| **Binary** | one of exactly two classes | will this loan default — yes or no? |
+| **Multiclass** | one of three or more classes | which fault caused this power outage — vegetation, equipment, weather, or demand? |
+| **Multilabel** | *several* classes at once may apply | which topics does this news article touch — politics, economy, sports...? |
+
+This lesson teaches binary classification first and extends it to multiclass at the
+end; multilabel is defined here so the term is not a stranger, and not taught.
+
+## Why Not Just Fit a Line?
+
+We own a working tool for numbers — so encode the classes as numbers ($y = 0$ for
+*coqui*, $y = 1$ for *portoricensis*), fit linear regression, done? Almost — and the
+"almost" is instructive. A line happily outputs $1.4$ or $-0.3$: what probability is
+140%? Worse, the line's predictions drift with the data's geometry — add a few very
+high-pitched calls and the fitted line tilts, dragging the place where it crosses 0.5
+even though those far-away calls were never in doubt.
+
+What we want keeps the linear machinery — a weighted sum of features, learned from
+data — but pins the output into $(0, 1)$ so it can honestly be a probability.
+
+## The Sigmoid: A Squash for Scores
+
+Logistic regression computes the same linear score as L03 and then squashes it:
+
+$$\hat{p} = \sigma(t), \qquad t = b_0 + b_1 x_1 + \dots + b_p x_p, \qquad \sigma(t) = \frac{1}{1 + e^{-t}}$$
+
+The **sigmoid** $\sigma$ is an S-shaped curve with exactly the properties needed:
+
+| Score $t$ | $\sigma(t)$ | Reading |
+|-----------|-------------|---------|
+| very negative | near 0 | confidently the negative class |
+| $0$ | exactly $0.5$ | the model's coin flip |
+| very positive | near 1 | confidently the positive class |
+
+No score, however extreme, escapes $(0, 1)$ — the squash is what makes "the model is
+83% sure" a meaningful sentence. The full pipeline from measurement to label:
+
+```{mermaid}
+flowchart LR
+  X["Features x<br/>(co, qui pitch)"] --> S["Linear score<br/>t = b0 + b1 x1 + b2 x2"]
+  S --> G["Sigmoid<br/>p = 1/(1+e^-t)"]
+  G --> T{"p >= 0.5 ?"}
+  T -->|yes| P["portoricensis"]
+  T -->|no| C["coqui"]
+```
+
+Everything before the threshold is smooth and probabilistic; the threshold is the
+last, deliberately blunt step — and the lab shows why you sometimes move it.
+
+## Decision Boundaries
+
+Where does the model switch answers? Exactly where $\hat{p} = 0.5$, which by the
+table above means **where the linear score $t = 0$** — and "$b_0 + b_1 x_1 + b_2 x_2
+= 0$" is the equation of a straight line in the feature plane. That line is the
+**decision boundary**: calls on one side get one label, calls on the other side get
+the other, and calls *near* it are precisely the ones with probabilities near 0.5.
+
+This is what "logistic regression is a **linear classifier**" means: whatever the
+probabilities do, the label-switching frontier is a line (a flat plane with more
+features). When the true frontier between classes is genuinely curved, a linear
+classifier caps out early — that limitation is real, and later tools (Unit IV trees,
+Unit V networks) exist largely to lift it.
+
+## Training: The Log Loss
+
+What loss should training minimize? MSE belongs to regression; for probabilities the
+natural currency is surprise. The **log loss** charges the model the negative log of
+the probability it assigned to the *true* class:
+
+| True class | Model said | Loss $-\log(\hat{p}_{\text{true}})$ | Verdict |
+|------------|-----------|--------------------------------------|---------|
+| portoricensis | $\hat{p} = 0.9$ | $0.11$ | cheap — confident and right |
+| portoricensis | $\hat{p} = 0.5$ | $0.69$ | mediocre — hedging |
+| portoricensis | $\hat{p} = 0.1$ | $2.30$ | expensive — confident and wrong |
+
+Averaged over the training set:
+
+$$L = -\frac{1}{m} \sum_{i=1}^{m} \Big[ y_i \log \hat{p}_i + (1 - y_i) \log(1 - \hat{p}_i) \Big]$$
+
+The bracket picks the term that matches each example's true label; the cost explodes
+as the model gets *confidently* wrong, which is exactly the behavior to punish in a
+probability machine. Unlike least squares, this loss has **no closed-form minimizer**
+— there is no normal equation to jump to. But it is convex (one bowl, one bottom), so
+**gradient descent** — the general route L03 named — reliably finds the best
+coefficients. This is why that name mattered.
+
+## Softmax: Three or More Classes
+
+For $K$ classes, give each class its own linear score $s_k(x)$, then convert the
+score vector into probabilities with the **softmax**: exponentiate every score and
+normalize,
+
+$$\hat{p}_k = \frac{e^{s_k(x)}}{\sum_{j=1}^{K} e^{s_j(x)}}$$
+
+The outputs are positive and sum to 1 — one probability per class — and the model
+predicts the class with the largest (the *argmax*). Binary logistic regression is the $K = 2$
+special case (one score pinned to zero recovers the sigmoid). scikit-learn's
+`LogisticRegression` switches to softmax automatically when it sees more than two
+classes; the lab runs it on the three iris species.
+
+## When to Use / When NOT to Use
+
+- **Use it when:** you need probabilities, not just labels; you want a strong,
+  fast, interpretable baseline (one readable weight per feature); the classes are
+  roughly separable by a line/plane.
+- **Avoid it when:** the boundary is clearly nonlinear (a linear classifier caps
+  out); you need the model to *describe* each class rather than just separate them
+  (that is the generative view — Gaussian discriminant analysis and Naive Bayes,
+  L06-L07).
+
+## Common Pitfalls
+
+- **Treating 0.5 as sacred.** It is the default threshold, not a law. When classes
+  are imbalanced (1 fraud in 1,000 transactions) or mistakes cost differently, the
+  right threshold moves — the lab's Exercise 1 does this deliberately.
+- **Reading accuracy as the whole story.** A 0.853 hides *which* calls fail and how
+  confidently. Unit III builds the proper instruments (confusion-based metrics);
+  this lesson plants the probability-level habit.
+- **Reading probabilities as guarantees.** $\hat{p} = 0.73$ means "given what I
+  learned, calls like this are portoricensis about 73% of the time" — the lab finds
+  a 73%-confident mistake. Estimates, not promises.
+
+::: {.callout-note title="Deep Dive: the logit, or why 'regression' (Optional)" collapse="true"}
+
+Invert the sigmoid and you find what the linear score *is*:
+
+$$t = \log \frac{\hat{p}}{1 - \hat{p}}$$
+
+— the log of the odds, called the **logit**. So logistic regression is ordinary
+linear regression *on the log-odds scale*: the model is linear in $t$, and each
+coefficient $b_j$ is the change in log-odds per unit of feature $j$ (equivalently,
+multiplying the odds by $e^{b_j}$). That is the historical name's logic — it
+regresses the logit — and it is why the fitted coefficients remain readable: sign
+says which class the feature pushes toward, magnitude says how hard, in odds.
+:::
+
+## FAQ / Industry Reality
+
+**"Why is it called *regression* if it classifies?"** — Because under the hood it
+*is* a regression — on the log-odds scale (see the Deep Dive). The name confuses
+everyone once; in practice, remember: target a quantity, linear regression; target a
+class, logistic regression.
+
+**"Can I trust the probabilities?"** — Mostly, for logistic regression — its training
+objective directly rewards honest probabilities, and it is among the better-calibrated
+models out of the box. But calibration degrades when the training data is small,
+imbalanced, or unlike deployment data. Professionals check calibration before
+treating 0.9 as 90% (a Unit III concern); until then, trust the *ordering* (0.9 is
+more credible than 0.6) more than the exact values.
+
+**"For 10 classes, do I train 10 binary models?"** — You can — that strategy is
+called one-vs-rest, and it works. But softmax handles all classes in one model with
+probabilities that sum to 1 by construction, and it is the default in scikit-learn.
+You will meet the same softmax again as the final layer of every classification
+neural network in Unit V.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Classification | predict a category; binary / multiclass / multilabel by output |
+| Logistic regression | linear score, squashed by the sigmoid into a probability |
+| Sigmoid | maps any score to (0,1); score 0 lands on 0.5 |
+| Decision boundary | where the label switches; linear here (score = 0) |
+| Threshold | the dial that turns probability into label; 0.5 is a default, not a law |
+| Log loss | pay -log(p of the true class); confident errors cost the most |
+| Softmax | one score per class, exponentiate and normalize; predict the argmax |
+| predict_proba | the lab's workhorse — probabilities, not just labels |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 4 (the logistic-regression
+  and softmax sections) — including the training details this lesson summarized.
+- **Docs:** [scikit-learn's LogisticRegression guide](https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression)
+  — solvers, regularization, and the multiclass behavior the lab relies on.
+- **Text, deeper:** James et al., *An Introduction to Statistical Learning*, ch. 4 —
+  logistic regression alongside the generative classifiers you meet later in Unit II
+  (L06-L07).

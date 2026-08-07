@@ -1,0 +1,194 @@
+---
+title: "CNN Architectures & Transfer Learning"
+unit: "V"
+lesson: "19"
+type: concept
+tags: [deep-learning, pytorch, cnn, architectures, resnet, residual-connections, transfer-learning, fine-tuning, torchvision]
+difficulty: intermediate
+duration: "90 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** the canonical CNN architecture pattern (conv/ReLU blocks plus pooling; spatial size
+  shrinks while depth grows) and place LeNet, AlexNet, VGG, and ResNet on the timeline. *(Understand)*
+- **Explain** the degradation problem and how a **residual (skip) connection** fixes it, letting very
+  deep networks train. *(Understand)*
+- **Apply** transfer learning in PyTorch: load a **pretrained** model, **freeze** the backbone, replace
+  the **head**, and train it. *(Apply -- in the lab)*
+- **Demonstrate** that transfer learning beats from-scratch training on little data, and **distinguish**
+  feature extraction from **fine-tuning**. *(Apply / Analyze)*
+
+> **Where this sits:** after `L18 — Convolutional Neural Networks`, where you built one CNN from
+> scratch. This lesson assembles those layers into the famous architectures and -- the real payoff --
+> **reuses** networks others trained on millions of images. · next: `L20 — Autoencoders &
+> Representation Learning`, which learns useful features *without* labels.
+>
+> **Hands-on:** [Lab — Transfer Learning with a Pretrained ResNet](l19_lab_cnn_architectures_transfer.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u05_deep_learning/l19_lab_cnn_architectures_transfer.ipynb)
+
+## Why This Matters
+
+You would not rewrite a database engine to build a web app -- you import one. Computer vision works the
+same way. The hard, expensive work of learning what edges, textures, and object-parts look like was
+already done, once, on more than a million ImageNet photos, by networks the field spent a decade
+refining. A **pretrained** network is that reusable engine, and **transfer learning** is the import
+statement: freeze what it already knows, bolt a small new classifier on top, and learn your task from a
+few hundred examples instead of a few million.
+
+Two ideas make this lesson. The first is **why** those very deep networks could be trained at all --
+the **residual connection**, one small architectural trick. The second is **how** you reuse them. By
+the end you will have taken a ResNet trained on ImageNet and, in about thirty seconds on a CPU, turned
+it into a CIFAR-10 classifier that crushes a CNN trained from scratch on the same data.
+
+## The CNN Architecture Pattern
+
+Real CNNs are built from the L18 pieces, stacked in a recurring rhythm: a few `Conv -> ReLU` layers,
+then a **pooling** layer, then a few more `Conv -> ReLU`, then pool again, and so on. Two things happen
+as you climb the stack. The image gets **smaller** in height and width (each pool halves it), and it
+gets **deeper** -- later convolutional layers hold *more* feature maps. Shrinking the grid while
+doubling the channels keeps the compute balanced and lets the network trade spatial detail for richer,
+more abstract features. At the top sits a small fully connected **head** ending in logits, exactly as
+in L18. A useful rule of thumb: prefer several small `3x3` kernels over one large kernel -- they see the
+same region with fewer parameters.
+
+That pattern has a history, and four names trace it:
+
+| Year | Network | What it added |
+|---|---|---|
+| 1998 | **LeNet-5** | the original conv/pool stack (tanh activations, average pooling) on handwritten digits |
+| 2012 | **AlexNet** | bigger and deeper; **ReLU** and **dropout**; won ImageNet and started the deep-learning boom |
+| 2014 | **VGG** | depth through uniform `3x3` convolutions -- simple and very deep |
+| 2015 | **ResNet** | **residual connections**, which made 50-to-150-layer networks trainable |
+
+## The Degradation Problem and Residual Connections
+
+If depth helps, why not just keep stacking layers? Because past a point a **plain** deep network gets
+*worse* -- and not from overfitting. Its **training** error goes up. A 56-layer plain net can train to a
+higher error than a 20-layer one, even though the deeper net could in principle copy the shallower one
+and add identity layers. The problem is **optimization**: gradients have to survive a long backward
+journey (the L17 unstable-gradient story), and a deep stack of layers struggles to even learn to do
+*nothing* where nothing is needed. This is the **degradation problem**.
+
+ResNet's fix is almost embarrassingly simple. Instead of asking a block to compute a target mapping
+`H(x)` directly, let it compute a **residual** `F(x)` and add the input back:
+
+$$\text{output} = \operatorname{ReLU}\big(F(x) + x\big)$$
+
+That `+ x` is the **skip** (or **shortcut**) **connection**. Now if the best thing a block can do is
+nothing, it only has to drive `F(x)` toward zero -- an easy target -- and the **identity** passes
+through untouched. Just as importantly, the skip gives gradients a direct path backward, so they reach
+the early layers without being throttled. A **residual block** -- two convolutions plus a skip -- is
+ResNet's repeating unit, and stacking them is what lets a 150-layer network train as easily as a
+shallow one. Where L17's initialization and batch-norm *tamed* unstable gradients, residual connections
+add a structural **highway** for them. (The same trick reappears in L22's Transformer blocks.)
+
+```{mermaid}
+flowchart LR
+  x["x (input)"] --> c1["Conv 3x3<br/>+ ReLU"]
+  c1 --> c2["Conv 3x3"]
+  x -- "skip (identity)" --> add(("+"))
+  c2 --> add
+  add --> r["ReLU"]
+  r --> out["output"]
+```
+
+## Transfer Learning
+
+Training a large network from scratch needs a large dataset and a lot of compute. Most of the time you
+have neither -- and you do not need them, because someone already trained a network on a giant task.
+**Transfer learning** reuses that work: take a model **pretrained** on a big dataset (typically
+**ImageNet** -- 1.2 million images, 1000 classes) and adapt it to your smaller, related task.
+
+The key is to split the network into two parts. The convolutional **backbone** learned *general* visual
+features -- edges and textures in the low layers, object-parts higher up -- and those transfer well
+across tasks. The final **head** (the classifier) is specific to the original 1000 classes and is
+useless for yours. So you **replace the head** and choose how much of the backbone to reuse:
+
+- **Feature extraction** -- **freeze** the entire backbone (`requires_grad = False`, so gradient descent
+  leaves its weights fixed) and train *only* the new head. The backbone becomes a fixed function that
+  turns each image into a vector of features; learning the head is fast and needs little data. This is
+  the cheap, robust default.
+- **Fine-tuning** -- after the head is trained, **unfreeze** the top block or two and continue training
+  end-to-end at a **low** learning rate, so backprop gently adapts the high-level features without
+  wrecking them. The more data you have, the more layers you can afford to unfreeze.
+
+```{mermaid}
+flowchart LR
+  img["input image"] --> bb["pretrained backbone<br/>(frozen)"]
+  bb --> f["512 features"]
+  f --> hd["new head<br/>(trained)"]
+  hd --> out["class logits"]
+```
+
+The guidelines are simple: freeze first and see how far it gets you; unfreeze top-down only if you need
+more and have the data; reduce the learning rate when you unfreeze. Transfer learning works best with
+deep **convolutional** networks (their low-level features are general) and when your inputs share
+low-level structure with the originals -- which also means you must feed inputs at the expected size and
+with the **same normalization** the model was trained with (ImageNet's per-channel mean and std).
+
+In PyTorch the gateway is **`torchvision.models`**: a library of architectures with pretrained weights,
+from LeNet-era nets through ResNet, VGG, EfficientNet, ConvNeXt, and Vision Transformers, loaded in one
+line: `torchvision.models.resnet18(weights="DEFAULT")`. When you cannot get more labeled data, the other
+cheap regularizer is **data augmentation** -- growing the training set with realistic variants (random
+crops, horizontal flips, small rotations) applied on the fly each epoch.
+
+## Common Pitfalls
+
+- **Forgetting to replace the head.** The pretrained head outputs the *original* number of classes
+  (1000 for ImageNet). Swap in a new `Linear` with *your* number of classes.
+- **Not freezing the backbone.** Leave millions of pretrained weights trainable on a few hundred images
+  and they overfit instantly. Freeze first; that is the whole point.
+- **Wrong input normalization.** A pretrained model expects its training-time preprocessing. Resize to
+  the expected size and normalize with the **ImageNet** mean/std, or the features come out garbage.
+- **Fine-tuning at a high learning rate.** A large step on unfrozen pretrained layers erases what they
+  learned. Drop the learning rate when you unfreeze.
+- **Assuming more layers always train better.** The degradation problem says otherwise -- that is exactly
+  why residual connections had to be invented.
+
+## FAQ / Industry Reality
+
+**"Freeze or fine-tune?"** -- Freeze first (feature extraction): it is fast, needs little data, and is
+hard to get wrong. Fine-tune the top layers only if you have enough data and feature extraction is not
+good enough -- and always drop the learning rate when you do.
+
+**"Which architecture should I pick?"** -- For most image tasks, start with a ResNet (e.g. `resnet18`
+or `resnet50`); it is a reliable, well-supported default. Pick a smaller/faster model (MobileNet,
+EfficientNet) for phones or tight latency, a larger one for maximum accuracy.
+
+**"Why is ResNet everywhere?"** -- Residual connections made very deep networks trainable and turned out
+to help almost any deep architecture. The idea -- add the input back around a block -- is now standard
+far beyond vision, including in Transformers.
+
+**"What about Vision Transformers?"** -- Attention-based models (L21, L22) now match or beat CNNs on
+large datasets, and `torchvision.models` ships pretrained ViTs too. They are reused exactly the same
+way: load pretrained, replace the head, freeze or fine-tune. Training any of these at scale, with GPUs
+and full augmentation pipelines, is the CDAT 4013 lab's territory.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---|---|
+| Architecture pattern | conv/ReLU + pool blocks: spatial size shrinks, depth (feature maps) grows; FC head on top |
+| The timeline | LeNet (1998) -> AlexNet (2012) -> VGG (2014) -> ResNet (2015) |
+| Degradation problem | very deep *plain* nets train *worse* -- an optimization failure, not overfitting |
+| Residual / skip connection | `out = ReLU(F(x) + x)`; learn a residual, fall back to identity, shortcut for gradients |
+| Transfer learning | reuse a model pretrained on a big task for a new, smaller, related one |
+| Backbone + head | keep the general conv backbone; replace the task-specific classifier head |
+| Feature extraction | freeze the backbone, train only the new head (cheap; little data) |
+| Fine-tuning | unfreeze the top block(s), train end-to-end at a LOW learning rate |
+| torchvision.models | one-line pretrained architectures: `resnet18(weights="DEFAULT")` |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 14 -- classic CNN architectures, ResNet, and
+  transfer learning, with the architecture tables in full.
+- **Foundational:** He et al. (2015), *Deep Residual Learning for Image Recognition* -- the ResNet paper
+  that introduced the residual connection.
+- **Docs:** the [torchvision.models](https://pytorch.org/vision/stable/models.html) catalogue (pretrained
+  weights + the expected input transforms) and the
+  [PyTorch transfer-learning tutorial](https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html).
+- **Notes:** the Stanford CS231n [transfer-learning notes](https://cs231n.github.io/transfer-learning/) --
+  when to freeze vs fine-tune, as a decision table.

@@ -1,0 +1,242 @@
+---
+title: "Regularization and Model/Feature Selection"
+unit: "III"
+lesson: "10"
+type: concept
+tags: [regularization, ridge, lasso, feature-selection, model-selection]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Explain** regularization as a penalty on the size of the weights, added to the
+  loss — a continuous flexibility dial whose strength (lambda) trades bias for
+  variance. *(Understand)*
+- **Contrast** Ridge (L2: smooth shrinkage, keeps every feature) with Lasso (L1:
+  sparsity, automatic feature selection), and choose between them. *(Understand /
+  Analyze)*
+- **Describe** the three feature-selection families — filter, wrapper, embedded —
+  and how model selection picks among whole model families by cross-validation.
+  *(Understand)*
+- **Apply** Ridge and Lasso, choose lambda by cross-validation, and read which
+  features Lasso keeps. *(Apply / Analyze — in the lab)*
+
+> **Where this sits:** after `L09 — The Bias-Variance Dilemma & Cross-Validation`
+> gave you a referee to *detect* overfitting, this lesson builds a dial to *fix* it
+> from inside the model · next: `L11 — Evaluation Metrics`.
+>
+> **Hands-on:** [Lab — Which Sensors Actually Matter](l10_lab_regularization_selection.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u03_learning_theory/l10_lab_regularization_selection.ipynb)
+
+## Why This Matters
+
+L09 left you with two tools against overfitting: a *referee* (cross-validation) that
+**detects** it, and a *discrete* dial — pick `k`, pick `gamma` from a short list. But
+the model itself was passive: you fit it, then judged it from outside.
+
+Regularization moves the dial **inside the model**. You change the thing the model is
+trying to minimize: instead of "fit the training data as well as possible", it becomes
+"fit the training data well *and* keep your weights small". One continuous knob,
+**lambda**, sets how much the second clause matters — and at the extreme, the model
+will even switch some features off entirely. This single idea covers all three of
+Unit III's remaining topics: how to tame a model (regularization), how to choose its
+features (selection), and how to choose the model itself (model selection).
+
+::: {.callout-tip title="Analogy"}
+Think of fitting as packing for a trip with a **baggage fee**. Without a fee
+(ordinary least squares) you stuff in every feature and let each weight grow as large
+as the training data flatters — you "memorize" the trip. Charge a fee per unit of
+weight and you pack only what earns its place. **Ridge** is a gentle per-kilo fee:
+everything gets a little lighter. **Lasso** is a steep fee with a free-item threshold:
+marginal items are left home entirely — the suitcase comes back with only the things
+that mattered.
+:::
+
+## The Penalty Idea
+
+A linear model predicts with weights $w_1, \dots, w_p$. Ordinary least squares (L03)
+chooses them to minimize the mean squared error alone. Regularization adds a second
+term — a **penalty** that grows with the size of the weights:
+
+$$\text{Loss} = \underbrace{\text{MSE}}_{\text{fit the data}} + \lambda \underbrace{\,\text{penalty}(w)}_{\text{stay simple}}$$
+
+Large weights are what let a linear model bend itself into knots through noise; taxing
+them pulls the fit back toward something smoother. The knob $\lambda \geq 0$ (called
+**`alpha`** in scikit-learn) sets the exchange rate:
+
+- $\lambda = 0$: the penalty vanishes — you are back to plain OLS (maximum flexibility,
+  may overfit).
+- $\lambda$ large: the penalty dominates — every weight is crushed toward zero (the
+  model goes rigid and underfits).
+
+So **lambda is a flexibility dial**, exactly the kind L09 taught you to set — and you
+set it the same way: by cross-validation. The two penalties below differ only in *how*
+they measure "size of the weights", and that difference changes everything.
+
+## Ridge (L2): Shrink Everything
+
+**Ridge** regression penalizes the sum of the *squared* weights:
+
+$$\text{Loss}_{\text{Ridge}} = \text{MSE} + \lambda \sum_{j=1}^{p} w_j^2$$
+
+Squaring punishes large weights hard and small weights barely at all, so Ridge
+**shrinks every weight smoothly toward zero in proportion** — but never *to* exactly
+zero. All $p$ features survive, each with a tamer coefficient. In the lab, Ridge pulls
+the coefficient vector's length from 94 (at alpha=1) down to 53 (at alpha=50), yet all
+30 sensors stay in the model. Ridge is the right choice when you believe **many features each
+contribute a little**, or when features are **correlated** (it shares weight across a
+correlated group rather than picking arbitrarily).
+
+## Lasso (L1): Select by Zeroing
+
+**Lasso** penalizes the sum of the *absolute* values of the weights:
+
+$$\text{Loss}_{\text{Lasso}} = \text{MSE} + \lambda \sum_{j=1}^{p} |w_j|$$
+
+The absolute value keeps pressuring a weight at the *same rate* all the way down to
+zero (the square's pressure fades as the weight shrinks). The consequence is dramatic:
+as lambda grows, Lasso drives weak weights **exactly to zero** and leaves them there.
+A zero weight means the feature is *gone* from the model — so Lasso performs
+**automatic feature selection** while it fits. In the lab, Lasso cuts 30 sensors down
+to 9, and then to 5, as you turn the dial. (Why exact zeros? The geometry is in the
+Deep Dive.)
+
+| | Ridge (L2) | Lasso (L1) |
+|--|-----------|-----------|
+| Penalty | $\sum w_j^2$ | $\sum \lvert w_j \rvert$ |
+| Effect on weights | shrinks all toward 0 | drives some to **exactly 0** |
+| Features kept | all $p$ | a sparse subset |
+| Selects features? | no | **yes** (embedded) |
+| Best when | many small effects; correlated features | few features truly matter; want an interpretable subset |
+
+Can't decide? **Elastic Net** adds both penalties at once (a blend of shrink-all and
+select-some) — named here, not drilled.
+
+::: {.callout-note title="You have already met regularization: the C dial"}
+L08's SVM and L04's logistic regression both carried a `C` knob. `C` is regularization
+strength in disguise: $C = 1/\lambda$, so **small C means strong regularization**. In
+fact scikit-learn's `LogisticRegression` is L2-regularized *by default*. The "lower C
+if your SVM overfits" rule from L08 was this lesson all along — you were turning a
+regularization dial before we had the name.
+:::
+
+## Choosing lambda: Cross-Validation, Again
+
+lambda is a hyperparameter, so it is chosen by the L09 protocol — never on the test
+set. Grid a few values, cross-validate each on the training data, keep the best mean
+CV score, refit on all the training data, open the test envelope once. The lab does
+exactly this and the CV curve peaks at a middling lambda — too little regularization
+overfits, too much underfits, the sweet spot is between. (`GridSearchCV` automates the
+loop; `RidgeCV` / `LassoCV` are built-in shortcuts.)
+
+## Feature Selection: Three Families
+
+Lasso is one way to end up with fewer features, but feature selection is a topic in its
+own right — and fewer features means a simpler, faster, often better-generalizing, and
+more *interpretable* model. The methods sort into three families:
+
+```{mermaid}
+flowchart TD
+  FS["Feature selection:<br/>keep the features that matter"] --> FIL["Filter<br/>rank by a statistic<br/>before any model<br/>(e.g. correlation)"]
+  FS --> WRA["Wrapper<br/>train + score feature subsets<br/>(e.g. RFE)"]
+  FS --> EMB["Embedded<br/>selection happens during fitting<br/>(e.g. Lasso)"]
+```
+
+- **Filter** — rank features by a statistic (correlation with the target, mutual
+  information) and keep the top ones. Fast and model-blind, but ignores how features
+  work *together*.
+- **Wrapper** — train a model on candidate subsets and keep the subset that scores
+  best; **Recursive Feature Elimination (RFE)** repeatedly drops the weakest feature
+  and refits. Accurate, but expensive (many models).
+- **Embedded** — selection happens *as part of* fitting. **Lasso is the headline
+  example**: one fit, and the zeros tell you which features to drop.
+
+## Model Selection: Choosing the Whole Model
+
+Zoom out one level. The same L09 protocol that picks `k` or `lambda` also picks among
+entirely different **model families** — linear regression vs a tree vs an SVM — and
+their hyperparameters: cross-validate each candidate, compare mean CV scores, refit the
+winner, test once. A useful split among families:
+
+- **Parametric** models assume a fixed form with a fixed number of parameters — linear
+  and logistic regression. Fast, interpretable, limited in shape.
+- **Non-parametric** models let complexity grow with the data — kNN, decision trees
+  (Unit IV). Flexible, hungrier for data, harder to read.
+
+There is no universally best family; cross-validation on *your* data is how you choose.
+
+## Common Pitfalls
+
+- **Regularizing unscaled features.** The penalty taxes every weight equally, so a
+  feature measured in large units gets an unfairly small weight and dodges the penalty.
+  **Standardize first** (`StandardScaler`) — this is the moment L08's scaling warning
+  finally bites. (Our lab's synthetic sensors are already on one scale, a deliberate
+  shortcut.)
+- **Selecting features on all the data, then cross-validating.** That leaks the test
+  folds into the selection. Selection must happen *inside* each CV fold (a `Pipeline`).
+- **Trusting Lasso's pick among correlated features.** Given two near-duplicate
+  features, Lasso keeps one and zeros the other almost arbitrarily — don't read deep
+  meaning into *which* survived. (Ridge or Elastic Net spread the weight instead.)
+- **Forgetting that lambda = 0 is just OLS.** Regularization is a dial, not a switch;
+  the un-regularized model is one end of it.
+
+::: {.callout-note title="Deep Dive: why L1 makes exact zeros (Optional)" collapse="true"}
+
+Picture minimizing the MSE subject to a *budget* on the weights (an equivalent view of
+the penalty). Ridge's budget $\sum w_j^2 \le t$ is a **circle** (a sphere in higher
+dimensions); Lasso's budget $\sum |w_j| \le t$ is a **diamond** with sharp corners
+*on the axes*. The MSE contours expand until they first touch the budget region. A
+circle has no special points, so the touch lands at generic coordinates — all weights
+nonzero (Ridge). A diamond's corners stick out, so the touch very often lands *on a
+corner* — and a corner has some coordinates exactly zero (Lasso). That geometric
+accident is the whole reason L1 selects features and L2 does not. **Elastic Net** uses
+$\alpha_1 \sum |w_j| + \alpha_2 \sum w_j^2$ — a rounded diamond — to get sparsity while
+sharing weight across correlated features.
+:::
+
+## FAQ / Industry Reality
+
+**"Ridge or Lasso — which do I reach for?"** — Lasso when you suspect few features
+matter and want an interpretable, selected subset; Ridge when many features each
+contribute a little or are correlated (Lasso would arbitrarily drop one of each
+correlated pair). Unsure, or both? Elastic Net blends them and is a safe default for
+wide, correlated data.
+
+**"Does regularization always improve accuracy?"** — No. It helps when the model is
+overfitting; on already-clean data it trades a little accuracy for simplicity. In the
+lab, Ridge barely moves the score while Lasso both improves the test score *and* hands
+you a 9-feature model instead of 30 — the simplicity is the win even when the accuracy
+gain is modest.
+
+**"What regularizes a neural network?"** — The same instinct, different mechanics:
+**dropout** randomly switches off neurons during training (Unit V), and "weight decay"
+is literally L2 regularization on the network's weights. The penalty idea scales all
+the way up.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Regularization | add a penalty on weight size: Loss = MSE + lambda * penalty |
+| lambda (alpha) | the strength dial; 0 = OLS, large = underfit; pick by CV |
+| Ridge (L2) | penalize $\sum w^2$; shrink all weights, keep every feature |
+| Lasso (L1) | penalize $\sum \lvert w \rvert$; zero out weak weights = feature selection |
+| Elastic Net | blend L1 + L2; sparsity with correlated-feature sharing |
+| C = 1/lambda | the SVM/logistic C you already used IS regularization strength |
+| Feature selection | filter (statistic) · wrapper (RFE) · embedded (Lasso) |
+| Model selection | choose families + hyperparameters by cross-validation |
+| Scale first | the penalty is scale-sensitive — standardize before regularizing |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 4 — regularized linear
+  models (Ridge, Lasso, Elastic Net, early stopping) worked end to end.
+- **Docs:** [scikit-learn's linear-model guide](https://scikit-learn.org/stable/modules/linear_model.html)
+  (Ridge/Lasso/ElasticNet) and the
+  [feature-selection guide](https://scikit-learn.org/stable/modules/feature_selection.html)
+  (filter, RFE, `SelectFromModel`).
+- **Text, deeper:** James et al., *An Introduction to Statistical Learning*, ch. 6 —
+  subset selection and shrinkage methods, with the geometry the Deep Dive sketched.

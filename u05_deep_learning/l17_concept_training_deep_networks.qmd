@@ -1,0 +1,218 @@
+---
+title: "Training Deep Networks"
+unit: "V"
+lesson: "17"
+type: concept
+tags: [deep-learning, pytorch, initialization, optimizers, batch-norm, dropout, vanishing-gradients]
+difficulty: intermediate
+duration: "90 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Explain** the unstable-gradients problem -- why backprop makes gradients vanish or explode in
+  deep nets, and why that stalls the lower layers. *(Understand)*
+- **Apply** the right weight initialization and activation (He + ReLU, Xavier + tanh/sigmoid) to keep
+  the signal alive, and **diagnose** a dead net from its gradient norms. *(Apply / Analyze -- in the lab)*
+- **Compare** optimizers (SGD, momentum, Adam) and the effect of the learning rate, and **explain**
+  what each adds to the plain gradient step. *(Understand / Analyze)*
+- **Use** dropout and batch normalization as training aids, and **state** what each does and how
+  `train()` vs `eval()` mode differs. *(Apply / Understand)*
+
+> **Where this sits:** after `L16 — Backpropagation & Autodiff`, where we built the engine that
+> computes every gradient. We can now build a net of *any depth* -- this lesson is about making one of
+> that depth actually **train**. · next: `L18 — Convolutional Neural Networks`, the first architecture
+> built for a specific data type (images).
+>
+> **Hands-on:** [Lab — The Deep-Network Training Toolkit](l17_lab_training_deep_networks.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u05_deep_learning/l17_lab_training_deep_networks.ipynb)
+
+## Why This Matters
+
+Deep networks existed for decades before they worked. The reason they were "mostly abandoned in the
+early 2000s" was not a shortage of compute or data alone -- it was that **nobody could train them**.
+Stack enough layers and the gradients dissolve on the way down, so the lower layers never move; or
+they blow up, and the loss diverges to `NaN`. What rescued deep learning was not one idea but a
+**toolkit** of small, sharp fixes, each repairing one failure mode.
+
+The picture to hold: a deep net is a **bucket brigade** passing the error signal hand-to-hand from the
+output back to the input. If each handoff spills a little -- a saturating activation, weights at the
+wrong scale -- nothing reaches the front of the line. This lesson is the brigade's equipment: better
+grips (initialization), non-spilling buckets (ReLU), a foreman who re-levels the line each round
+(batch norm), a faster cadence (momentum, Adam), and a rule against over-eager runners (dropout).
+
+## The Disease: Unstable Gradients
+
+Backprop (L16) computes a parameter's gradient by **multiplying local derivatives along the path from
+the loss back to that parameter**. In a deep net those paths are long, so the gradient is a long
+product of factors. If the typical factor is a bit **less than 1**, the product shrinks geometrically
+toward zero by the time it reaches the lowest layers -- the **vanishing-gradients** problem: the lower
+layers get almost no signal and barely learn. If the typical factor is a bit **more than 1**, the
+product blows up -- the **exploding-gradients** problem, which shows up most in recurrent nets and ends
+in divergence. The umbrella name is **unstable gradients**: different layers learn at wildly different
+speeds.
+
+```{mermaid}
+flowchart RL
+  L["loss<br/>grad = 1"] --> o["output layer<br/>grad healthy"]
+  o --> h3["hidden 3<br/>x 0.3"]
+  h3 --> h2["hidden 2<br/>x 0.3"]
+  h2 --> h1["hidden 1<br/>grad ~ 0 (vanished)"]
+  h1 --> i["input layer<br/>never learns"]
+```
+
+The classic 2010 culprit (Glorot and Bengio): the **sigmoid** activation paired with the then-standard
+initialization. Sigmoid **saturates** -- for large positive or negative inputs its output flattens and
+its derivative is nearly zero -- and it has a mean of 0.5, not 0. Multiply many near-zero derivatives
+together and the signal to the lower layers is gone. The lab makes this concrete: an 8-layer sigmoid
+net's first-layer gradient norm is essentially `0.000000`, and its loss never moves off `0.693`
+(`= ln 2`, the cost of guessing).
+
+## Cure 1 -- Initialization
+
+Glorot and Bengio's insight: for the signal to flow, the **variance of the activations should stay
+roughly constant from layer to layer** (forward), and so should the variance of the gradients
+(backward). That pins down how to scale the initial random weights, using a layer's **fan-in** (number
+of inputs) and **fan-out** (number of outputs):
+
+| Scheme | Variance scaled by | Use with |
+|---|---|---|
+| **Glorot / Xavier** | `fan_avg = (fan_in + fan_out)/2` | tanh, sigmoid, linear |
+| **He / Kaiming** | `fan_in` | ReLU and its variants |
+
+The mismatch is what bites: Xavier was derived for saturating activations, so on a **ReLU** net it
+still lets the signal die. In the lab, passing a signal through 20 ReLU layers gives an activation
+std of `0.0000` (PyTorch's plain default), `0.0009` (Xavier -- still vanishing), and `0.8975` (He --
+alive). PyTorch's `nn.Linear` already uses a Kaiming-*style* default, but its conservative `a=sqrt(5)`
+scaling (inherited from an old leaky-ReLU setting) makes the weights smaller than He-for-ReLU, so it
+*also* vanishes in a deep pure-ReLU stack -- which is why you set the scheme explicitly with
+`torch.nn.init` (e.g. `nn.init.kaiming_normal_(layer.weight, nonlinearity="relu")`).
+
+## Cure 2 -- Non-saturating Activations
+
+The other half of the 2010 fix was the activation itself. **ReLU** (`max(0, z)`) does not saturate for
+positive inputs and is cheap to compute -- the modern default. Its one flaw is the **dying ReLU**: a
+unit whose input is negative for every example outputs 0 forever, and since ReLU's gradient is 0 there,
+it never recovers. The refinements all address this:
+
+- **Leaky ReLU / PReLU** -- a small slope for `z < 0`, so the unit can never fully die.
+- **ELU / SELU** -- smooth, negative-side curves; a pure-MLP SELU stack *self-normalizes*.
+- **GELU / Swish / Mish** -- smooth, curved everywhere; the default in modern transformers, at a
+  little extra compute.
+
+Practical rule: **start with ReLU** (paired with He init); reach for a variant only when it pays.
+
+## Cure 3 -- Batch Normalization
+
+**Batch normalization** (Ioffe and Szegedy, 2015) inserts a step between a layer and its activation
+that **normalizes each feature across the mini-batch** to zero mean and unit variance, then applies a
+**learnable scale and shift** (gamma, beta) so the network can undo the normalization if it helps.
+Keeping activations well-conditioned at every depth stabilizes training, permits **higher learning
+rates**, and mildly regularizes. One catch you must respect: BatchNorm uses the **current batch's
+statistics during `train()`** but **running averages during `eval()`** -- so the mode you put the model
+in matters at inference time.
+
+## Cure 4 -- Better Optimizers
+
+Plain gradient descent takes a step of fixed size `lr` in the direction of the gradient. Two upgrades
+make it dramatically faster and more robust:
+
+- **Momentum** -- accumulate a *velocity* from past gradients and step with that. Like a ball rolling
+  downhill, it powers through flat spots and damps the zig-zag across narrow valleys.
+- **Adam** -- keeps a per-parameter running average of the gradient (momentum) **and** of its squared
+  magnitude (RMSProp), and uses them to give **each parameter its own adaptive step size**. It is the
+  robust default: it just works without much tuning.
+
+In the lab, on the same net for 150 epochs, the final loss is `0.130` (SGD), `0.056` (SGD + momentum),
+and `0.044` (Adam) -- Adam converges fastest with no hand-holding.
+
+::: {.callout-important title="The learning rate is the master dial"}
+No optimizer saves you from a bad **learning rate**. Too high and the loss bounces or diverges to
+`NaN`; too low and training crawls. The lab's sweep makes it vivid: `lr = 10` ends at loss `4.80`
+(diverged), `lr = 0.0001` crawls to `0.42`, and `lr = 0.01` reaches `0.048` (test `0.992`). When a net
+will not train, the learning rate is the first knob to turn -- sweep it by orders of magnitude. A
+**learning-rate schedule** (step, exponential, or cosine decay) starts large to move fast, then shrinks
+to settle into the minimum.
+:::
+
+## Cure 5 -- Dropout
+
+Big networks have the capacity to **memorize** the training set (L09's overfitting, now with millions
+of parameters). **Dropout** (Srivastava et al., 2014) fights it by **randomly zeroing a fraction `p` of
+activations on every training step**, so no unit can lean on any particular other unit -- the net is
+forced to spread its bets and learn redundant, robust features. It is the neural-net regularizer named
+back in L10, now developed. Like BatchNorm, it is **active in `train()` and switched off in `eval()`**
+(at test time you want the whole network). In the lab a wide net memorizes a 20-feature set (train
+`1.000`, test `0.840`); adding `nn.Dropout(0.5)` raises test accuracy to `0.880` and shrinks the
+train-test gap from `0.160` to `0.120`.
+
+```{mermaid}
+flowchart LR
+  d["Unstable gradients<br/>(vanish / explode)"] --> c1["Init: Glorot / He"]
+  d --> c2["Activation: ReLU & co."]
+  d --> c3["Batch normalization"]
+  d --> c4["Optimizer: momentum / Adam<br/>+ learning-rate schedule"]
+  ov["Overfitting"] --> c5["Dropout"]
+```
+
+Each cure repairs one failure mode: the four on the left keep the gradient signal -- the backward pass
+from L16 -- flowing through depth, while dropout fights the separate problem of an over-large net
+memorizing the training set.
+
+## Common Pitfalls
+
+- **Xavier init on a ReLU net.** The signal dies just like the default -- ReLU wants **He**.
+- **Leaving the model in `train()` at evaluation.** Dropout keeps dropping and BatchNorm uses batch
+  stats, so your test numbers are wrong. Call `model.eval()` before measuring (and `model.train()`
+  before the next training step).
+- **A learning rate off by orders of magnitude.** The single most common reason a net "won't train."
+  Sweep it first.
+- **Reaching for exotic activations or stacking every trick blindly.** ReLU + He + Adam already train
+  most nets; add BatchNorm or dropout when a real problem (instability, overfitting) calls for it.
+- **"Deeper is always better."** Without these tricks, deeper is often *worse* -- the whole reason this
+  lesson exists.
+
+## FAQ / Industry Reality
+
+**"Which optimizer should I actually use?"** -- Start with **Adam** (robust, little tuning). For the
+last bit of generalization on big vision models, practitioners often switch to **SGD + momentum** with
+a schedule near the end. For most work, Adam is the answer.
+
+**"Do I still need careful init if I use BatchNorm?"** -- BatchNorm makes a net far less sensitive to
+initialization, so you can get away with more. But He init + ReLU is free and standard, and not every
+architecture uses BatchNorm -- so yes, still init sensibly.
+
+**"ReLU or something fancier?"** -- ReLU is the default and usually fine. Swish/GELU/Mish can give a
+small bump on hard tasks at extra compute; leaky ReLU is a cheap insurance against dying units. Don't
+agonize -- profile, then decide.
+
+**"How do I pick the learning rate?"** -- Sweep by orders of magnitude (`1, 0.1, 0.01, 0.001, ...`) and
+watch the loss curve, exactly as the lab's Ex1 does; pick the largest rate that trains stably, then add
+a decay schedule. The deeper, automated version of this tuning is the CDAT 4013 lab's territory.
+
+## Summary / Cheat-sheet
+
+| Problem / tool | The one-liner |
+|---|---|
+| Unstable gradients | backprop multiplies local derivatives -> deep products vanish (<1) or explode (>1) |
+| Glorot / Xavier init | scale by `fan_avg`; for tanh / sigmoid / linear |
+| He / Kaiming init | scale by `fan_in`; for ReLU and variants (the default choice) |
+| ReLU & variants | non-saturating activation; leaky/ELU/SELU/GELU fix the dying-ReLU corner |
+| Batch normalization | normalize each feature per batch + learnable scale/shift; batch stats in train, running in eval |
+| Momentum | a velocity over past gradients -- faster, smoother descent |
+| Adam | per-parameter adaptive step sizes (momentum + RMSProp); the robust default |
+| Learning rate | the master dial: too high diverges, too low crawls; decay it on a schedule |
+| Dropout | randomly zero a fraction of activations each step -> regularizes; off at eval |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 11 -- training deep nets: init, activations,
+  batch norm, optimizers, and regularization, with the derivations behind each result.
+- **Docs:** [PyTorch `torch.nn.init`](https://pytorch.org/docs/stable/nn.init.html) and
+  [`torch.optim`](https://pytorch.org/docs/stable/optim.html) -- every initializer and optimizer named
+  here, with the exact API the lab uses.
+- **Papers:** Glorot & Bengio (2010, initialization); He et al. (2015, He init + PReLU); Ioffe &
+  Szegedy (2015, batch normalization); Srivastava et al. (2014, dropout) -- the four results this
+  toolkit is built from.

@@ -1,0 +1,228 @@
+---
+title: "Factor Analysis & ICA"
+unit: "VII"
+lesson: "27"
+type: concept
+tags: [unsupervised-learning, dimensionality-reduction, factor-analysis, ica, scikit-learn]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Explain** PCA's built-in assumptions and where they break -- it returns **uncorrelated**
+  max-variance axes, which is weaker than independence and treats variance as signal -- motivating two
+  cousins. *(Understand)*
+- **Explain** **Factor Analysis**: a few latent Gaussian **factors** linearly mixed plus **per-feature**
+  noise (a generative model fit by EM); PCA is the special case where that noise is equal in every
+  feature. *(Understand)*
+- **Explain** **ICA**: recovering statistically **independent**, **non-Gaussian** sources from linear
+  mixtures (**blind source separation**), a strictly stronger demand than PCA's uncorrelatedness.
+  *(Understand)*
+- **Apply** `FastICA`, `FactorAnalysis`, and `PCA` in scikit-learn to recover signals, read
+  `noise_variance_`, and compare held-out log-likelihood. *(Apply)*
+- **Analyze** the cocktail-party demo (ICA recovers, PCA does not) and place every method on the Unit VII
+  toolbox map -- linear PCA / FA / ICA versus nonlinear t-SNE / LLE. *(Analyze)*
+
+> **Where this sits:** this lesson **closes Unit VII (Dimensionality Reduction)**. `L26 — Principal
+> Component Analysis` compressed the **columns** by projecting onto max-variance axes; this lesson keeps
+> the same "data is a mix of a few hidden things" idea but changes the goal -- **Factor Analysis**
+> models the hidden factors probabilistically (reusing the EM engine from `L25 — Gaussian Mixtures & EM`,
+> now with continuous latents), and **ICA** *un-mixes* independent sources. · next: `L28 —
+> Reinforcement Learning: The Paradigm` (a new kind of learning closes the course). Still
+> **scikit-learn**.
+>
+> **Hands-on:** [Lab — The Cocktail Party: ICA and Factor Analysis](l27_lab_factor_analysis_ica.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u07_dimensionality_reduction/l27_lab_factor_analysis_ica.ipynb)
+
+## Why This Matters
+
+PCA is the right first move for dimensionality reduction, but it answers exactly one question: *which
+orthogonal directions hold the most variance?* That is not always the question you have. Sometimes your
+features are noisy by very different amounts and you want to separate the shared signal from per-feature
+noise. Sometimes several independent processes are **mixed** into every measurement and you want the
+processes back, not their blend. PCA cannot do either, because the assumptions that make it fast also
+make it blunt. This lesson meets the two classic cousins that relax those assumptions -- **Factor
+Analysis** and **Independent Component Analysis** -- and closes Unit VII with a map of the whole
+dimensionality-reduction toolbox.
+
+::: {.callout-tip title="Analogy"}
+Three people are talking at once, and three microphones each pick up a different mixture of all three
+voices. **PCA** is the sound engineer who can only find the loudest *combined* channels -- still
+everyone-at-once, just re-aimed. **ICA** is the engineer who insists each output track be a *separate,
+self-contained* voice, and so actually pulls the three speakers apart. The trick that makes it possible:
+real voices are **non-Gaussian** (spiky, structured), and ICA hunts for exactly that structure.
+:::
+
+## PCA's Three Assumptions
+
+PCA is a single SVD of the centered data, and that speed comes from three baked-in assumptions:
+
+1. **Uncorrelated is good enough.** PCA's components are mutually **uncorrelated** (orthogonal). But
+   uncorrelated only removes *linear, second-order* dependence; two signals can be uncorrelated and
+   still completely predict each other. **Independence** -- no statistical dependence of any order -- is
+   strictly stronger.
+2. **Variance equals signal.** PCA keeps the highest-variance directions. If one feature is just loud
+   noise, PCA chases it anyway.
+3. **The mixing is linear.** PCA projects onto a flat subspace; it cannot follow a curved manifold.
+
+Each cousin relaxes one assumption. **Factor Analysis** drops assumption 2 (it models per-feature noise
+instead of equating variance with signal). **ICA** drops assumption 1 (it demands full independence, not
+mere decorrelation). **Manifold methods** (t-SNE, LLE) drop assumption 3.
+
+## Factor Analysis
+
+Factor Analysis turns dimensionality reduction into a **generative model**. It says each observed sample
+$\mathbf{x}$ (with $p$ features) is built from a few latent **factors** $\mathbf{z}$ (with $k \ll p$),
+linearly mixed and then corrupted by noise:
+
+$$
+\mathbf{x} = \mathbf{W}\mathbf{z} + \boldsymbol{\mu} + \boldsymbol{\varepsilon}, \qquad
+\mathbf{z} \sim \mathcal{N}(\mathbf{0}, \mathbf{I}), \qquad
+\boldsymbol{\varepsilon} \sim \mathcal{N}(\mathbf{0}, \boldsymbol{\Psi})
+$$
+
+The loading matrix $\mathbf{W}$ ($p \times k$) says how the factors combine into features; the key term
+is $\boldsymbol{\Psi}$, the noise covariance, which is **diagonal** -- a *separate* noise variance for
+each feature. That single design choice is the whole difference from PCA: **PCA is Factor Analysis with
+$\boldsymbol{\Psi} = \sigma^2 \mathbf{I}$**, one noise level shared by all features. When features really
+do have unequal noise, FA can absorb it into $\boldsymbol{\Psi}$ and keep $\mathbf{W}$ clean, while PCA
+is forced to bend its components toward the noisiest features.
+
+```{mermaid}
+flowchart LR
+  Z["k latent factors<br/>z ~ N(0, I)"] --> M["linear mix<br/>W z + mu"]
+  M --> O["observed features x"]
+  E["per-feature noise<br/>eps ~ N(0, Psi), Psi diagonal"] --> O
+```
+
+Because the factors $\mathbf{z}$ are hidden, FA is fit by **Expectation-Maximization** -- the same engine
+that trained the Gaussian mixture in `L25 — Gaussian Mixtures & EM`. There the latent variable was a
+discrete cluster label; here it is a continuous factor vector, but the E-step / M-step rhythm is
+identical. FA also gives you a real likelihood, so you can compare models with `.score` (held-out
+log-likelihood), as the lab does. In the lab, FA's estimated `noise_variance_` recovers the injected
+per-feature noise, and on held-out data it **beats PCA under heteroscedastic noise (-7.85 vs -8.94) and
+ties it under equal noise (-9.02 vs -9.03)**.
+
+## Independent Component Analysis
+
+ICA attacks a different problem: **blind source separation**. You observe linear mixtures
+$\mathbf{x} = \mathbf{A}\mathbf{s}$ of some hidden sources $\mathbf{s}$, you do not know the mixing
+matrix $\mathbf{A}$ ("blind"), and you want an unmixing matrix $\mathbf{W}$ so that
+
+$$
+\hat{\mathbf{s}} = \mathbf{W}\mathbf{x}
+$$
+
+recovers the original sources. The defining requirement is that the recovered components be statistically
+**independent** -- not merely uncorrelated, as PCA delivers, but free of dependence at *every* order.
+
+Independence alone is not quite enough: the catch is **non-Gaussianity**. If the sources were Gaussian,
+any rotation of them would look identical (a sum of Gaussians is Gaussian), so the sources could never be
+pinned down. ICA works precisely because real signals -- voices, the lab's sine / square / sawtooth --
+are **non-Gaussian**, and it searches for the unmixing that makes the outputs *as non-Gaussian as
+possible*. That is why the central limit theorem is ICA's friend: a mixture of independent sources is
+*more* Gaussian than any single source, so "least Gaussian" points back at the originals.
+
+Two practical consequences: ICA first **whitens** the data (often with a PCA step), and its recovered
+sources come out with **no natural order, sign, or scale** -- which is why the lab matches them to the
+truth by absolute correlation. In the lab, ICA recovers all three sources at `|corr|` >= **0.997**, while
+PCA -- finding orthogonal blends rather than independent sources -- reaches only **0.6-0.8**.
+
+::: {.callout-note title="Deep Dive: what a 'component' means in each method (Optional)" collapse="true"}
+
+All three methods write the data as a few directions times coefficients, but "component" means something
+different in each:
+
+- **PCA** -- an **uncorrelated** direction of maximum remaining variance. Ordered, orthogonal, and
+  unique (up to sign). Answers "where is the spread?"
+- **Factor Analysis** -- a **latent Gaussian factor**, recovered together with an explicit per-feature
+  noise model. Not unique (the factors can be rotated), because FA only cares about explaining the
+  *shared* covariance after noise is removed. Answers "what hidden Gaussian causes drive the features,
+  and how noisy is each feature?"
+- **ICA** -- a statistically **independent, non-Gaussian source**. Unordered and sign/scale-free.
+  Answers "what separate processes were mixed together?"
+
+So PCA decorrelates, FA explains shared variance net of noise, and ICA separates independent causes --
+three different jobs that all happen to look like "a matrix of components."
+:::
+
+## The Unit VII Toolbox
+
+```{mermaid}
+flowchart TD
+  S{"What do you want<br/>from the columns?"}
+  S -- "compress / visualize<br/>(linear, max variance)" --> P["PCA"]
+  S -- "model unequal per-feature<br/>noise + latent factors" --> F["Factor Analysis"]
+  S -- "separate independent<br/>non-Gaussian sources" --> I["ICA"]
+  S -- "unfold a curved manifold<br/>for a 2-D picture" --> M["t-SNE / LLE<br/>(nonlinear, named)"]
+```
+
+PCA, FA, and ICA are all **linear** -- they multiply the data by a matrix. When the structure is a
+curved, twisted **manifold** (a 2-D sheet rolled up in higher dimensions), no single linear projection
+can unfold it. **Manifold methods** can: **t-SNE** keeps similar points close to draw a 2-D map (the lab
+splits the digits into ten clean islands where PCA's projection overlapped), and **LLE** stitches
+together local linear patches. They are powerful for **visualization** but slow, stochastic, and one-way
+(you cannot `transform` new points or read off variance), so PCA stays the default and these are the
+special-occasion tools.
+
+## Common Pitfalls
+
+- **Using ICA on Gaussian sources.** ICA needs **non-Gaussian** sources to work; on Gaussian data there
+  is nothing to separate and the result is meaningless. For Gaussian latent structure, that is FA's job.
+- **Expecting ICA components in a fixed order or scale.** They have **no** natural order, sign, or
+  magnitude. Always match recovered sources to references by correlation, never by position.
+- **Thinking FA is "just PCA".** The difference is the **per-feature** noise term $\boldsymbol{\Psi}$.
+  With equal noise they coincide; with unequal noise FA is the better model (and the only one with a
+  proper likelihood to check).
+- **Forgetting to scale features on different units.** Like PCA, FA and ICA are sensitive to feature
+  scale; standardize when units differ.
+- **Reaching for t-SNE / LLE to preprocess a model.** They are for **pictures**, not pipelines -- there
+  is no stable `transform` for new data. Use PCA (or FA) when a downstream model needs the reduced
+  features.
+
+## FAQ / Industry Reality
+
+**"Is Factor Analysis just PCA with extra steps?"** -- No. The extra step -- a separate noise variance
+per feature -- is the point. It makes FA a proper probabilistic model with a likelihood, and it wins
+whenever your features are noisy by different amounts. PCA is the equal-noise special case.
+
+**"When would I actually use ICA?"** -- Separating mixed signals: EEG/MEG brain channels, audio source
+separation, removing artifacts (eye blinks) from recordings, financial signal extraction. Anywhere
+several independent processes are summed into each measurement.
+
+**"What is t-SNE / LLE, and why only named here?"** -- They are **nonlinear** manifold methods for
+**visualizing** high-dimensional data in 2-D. They are wonderful for pictures (the lab's digit islands)
+but slow, stochastic, and cannot transform new points, so their mechanics belong to a dedicated treatment;
+this lesson uses one as a closing taste.
+
+**"How many factors / components should I pick?"** -- For FA, compare held-out log-likelihood across
+candidate $k$ (FA has a real `.score`); for ICA, the number of sources is usually known from the problem
+(three microphones, three voices).
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| PCA's limits | uncorrelated (not independent), variance = signal, linear |
+| Factor Analysis | latent Gaussian **factors** + **per-feature** noise $\boldsymbol{\Psi}$; generative, fit by EM |
+| PCA vs FA | PCA = FA with equal noise ($\boldsymbol{\Psi} = \sigma^2 \mathbf{I}$); FA wins under unequal noise |
+| ICA | un-mix **independent**, **non-Gaussian** sources: $\mathbf{x} = \mathbf{A}\mathbf{s}$, $\hat{\mathbf{s}} = \mathbf{W}\mathbf{x}$ |
+| Why non-Gaussian | Gaussian sources are rotationally ambiguous; ICA maximizes non-Gaussianity |
+| Uncorrelated vs independent | PCA decorrelates (second-order); ICA enforces full independence |
+| Blind source separation | recover sources from mixtures with no knowledge of the mixing (the cocktail party) |
+| t-SNE / LLE | **nonlinear** manifold methods for **visualization** only (no transform for new points) |
+| Toolbox | compress -> PCA; latent factors + unequal noise -> FA; separate sources -> ICA; curved manifold -> t-SNE/LLE |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 8 -- the manifold-learning and ICA sections,
+  and the PCA variants this lesson contrasts.
+- **Docs:** [scikit-learn's decomposition guide](https://scikit-learn.org/stable/modules/decomposition.html)
+  -- `FactorAnalysis`, `FastICA`, and the
+  [FA-vs-PCA model-selection example](https://scikit-learn.org/stable/auto_examples/decomposition/plot_pca_vs_fa_model_selection.html).
+- **Blind source separation:** scikit-learn's
+  [FastICA cocktail-party example](https://scikit-learn.org/stable/auto_examples/decomposition/plot_ica_blind_source_separation.html)
+  -- the demo this lab is built from.

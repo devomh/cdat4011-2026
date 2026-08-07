@@ -1,0 +1,249 @@
+---
+title: "The Supervised Learning Problem and Linear Regression"
+unit: "II"
+lesson: "03"
+type: concept
+tags: [supervised-learning, regression, linear-regression, loss-function, gradient-descent, r-squared]
+difficulty: introductory
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** the supervised learning problem as choosing, from a family of candidate
+  functions, the one that minimizes a loss over the training data. *(Understand)*
+- **Explain** how least squares defines the best-fitting line and **interpret** fitted
+  coefficients in real units. *(Understand)*
+- **Interpret** MSE and $R^2$ as measures of fit, including what they mean against a
+  predict-the-mean baseline. *(Analyze)*
+- **Train and evaluate** simple and multiple linear regression in scikit-learn.
+  *(Apply — in the lab)*
+
+> **Where this sits:** after `L02 — The ML Toolkit and Your First Model` · next: classification
+> with logistic regression (L04). Opens Unit II.
+>
+> **Hands-on:** [Lab — Predicting the Harvest](l03_lab_linear_regression.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u02_supervised_learning/l03_lab_linear_regression.ipynb)
+
+## Why This Matters
+
+A coffee cooperative in Puerto Rico's central mountains has to commit January prices
+for a harvest that arrives months later. What it knows in January is measurable: each
+plot's area, the age of its trees, its shade cover. What it needs is a *number* —
+expected kilograms per plot. L01's paradigm table told you what this is: supervised
+learning, regression flavor. This lesson is where we stop classifying problems and
+start solving one.
+
+::: {.callout-tip title="Analogy"}
+The line of best fit is the **fairest summary** of the data: every point pulls the
+line toward itself, and least squares is the rule that decides how hard each point
+gets to pull. Points far from the line pull much harder — which is both the method's
+logic and, as we will see, one of its weaknesses.
+:::
+
+## The Supervised Learning Problem
+
+L01 defined supervised learning by its data: every example carries the desired answer.
+Now we can state the *problem* precisely. The notation here recurs in every lesson
+through Unit V, so it pays to read this table slowly:
+
+| Symbol | Name | In the coffee example |
+|--------|------|----------------------|
+| $x$ | feature vector (input) | (area, tree age, shade) for one plot |
+| $y$ | label / target (output) | that plot's yield in kg |
+| $D = \{(x_1, y_1), \dots, (x_m, y_m)\}$ | training set of $m$ examples | 90 plots with known harvests |
+| $h$ | hypothesis — a candidate function $h(x) \approx y$ | one particular line/plane |
+| $H$ | hypothesis class — all candidates we consider | all linear functions |
+| $L(h)$ | loss function — how wrong $h$ is on $D$ | mean squared error |
+
+**Given** the training set, **find** the hypothesis that disagrees with it least:
+
+$$h^* = \underset{h \in H}{\text{argmin}}\; L(h)$$
+
+That single line is most of machine learning. Different algorithms differ in *which
+family* $H$ they search (lines, trees, neural networks), *which loss* $L$ they
+minimize, and *how* they search — but the skeleton is always: candidates, a score,
+a search.
+
+```{mermaid}
+flowchart LR
+  D["Training data D"] --> P["Predictions h(x)"]
+  H["Current hypothesis h"] --> P
+  P --> L["Loss L(h):<br/>how wrong is h?"]
+  D --> L
+  L -->|"adjust h to reduce the loss"| H
+```
+
+Training is this loop: propose, measure, adjust, repeat — until no adjustment makes
+the loss smaller.
+
+## Linear Regression: The Simplest Serious Hypothesis
+
+With one feature, the hypothesis class is all straight lines:
+
+$$\hat{y} = b_0 + b_1 x$$
+
+- $b_1$ (the **slope**, or coefficient) — predicted change in $y$ per one-unit change
+  in $x$: "every extra cuerda is worth about 175 kg".
+- $b_0$ (the **intercept**) — the prediction at $x = 0$. Often outside the data's
+  range, in which case it is a mathematical anchor, not a claim about zero-area farms.
+- $\hat{y}$ ("y-hat") — a prediction, to distinguish it from an observed $y$.
+
+The gap $y_i - \hat{y}_i$ for each training point is its **residual** — what the line
+fails to explain. A good line has residuals that are small and patternless; the lab
+draws them.
+
+## Least Squares: What "Best" Means
+
+A loss function turns "best line" from taste into arithmetic. Linear regression uses
+**mean squared error**:
+
+$$L(h) = \frac{1}{m} \sum_{i=1}^{m} \left( h(x_i) - y_i \right)^2$$
+
+Why *squared*? Squaring makes errors positive (overshooting and undershooting both
+count), and it punishes large misses disproportionately — a 100 kg error contributes
+10,000, not 100. That is the "pull" in the analogy: outliers pull hard. The line
+minimizing this loss is the **least squares** line.
+
+How is the minimum actually found? Two routes, and both names matter. For linear
+regression a closed form exists — the **normal equation**, one matrix computation
+that lands exactly on the best coefficients. For nearly every other model in this
+course there is no closed form, and the general tool is **gradient descent**:
+repeatedly nudge the coefficients in the direction that reduces the loss — the
+training-loop diagram above, made literal. The details are optional below; the two
+names are not, because gradient descent returns in the very next lesson.
+
+::: {.callout-note title="Deep Dive: the normal equation and gradient descent (Optional)" collapse="true"}
+
+Two routes lead to the same coefficients:
+
+**The normal equation.** MSE is a smooth bowl-shaped function of the coefficients, and
+calculus gives its minimum in closed form: $\hat{\beta} = (X^T X)^{-1} X^T y$. One
+matrix expression, no iteration — this is what scikit-learn effectively computes for
+`LinearRegression`. (Notice the mathematical-foundations map from L01 at work: linear
+algebra is carrying the data, calculus found the minimum.)
+
+**Gradient descent.** Compute the *gradient* — the direction in coefficient-space in
+which the loss increases fastest — and step the other way, repeatedly. Slower here,
+but it works for models that have **no** closed form, which is nearly all of them:
+logistic regression next lesson, neural networks in Unit V. The training-loop diagram
+above is literally gradient descent's flowchart.
+
+The derivations belong to a calculus course; this course needs you to know what each
+method *is* and when each applies.
+:::
+
+## Multiple Linear Regression
+
+Real predictions rarely hang on one feature. With $p$ features the hypothesis becomes
+a weighted sum:
+
+$$\hat{y} = b_0 + b_1 x_1 + b_2 x_2 + \dots + b_p x_p$$
+
+Nothing else changes — same loss, same fitting — but reading the model gets richer
+and requires care:
+
+- Each $b_j$ is the predicted change in $y$ per unit of $x_j$ **holding the other
+  features fixed**.
+- The **sign** is the story: in the lab, shade gets a *negative* coefficient — more
+  shade, less volume (the co-op trades volume for quality).
+- Raw magnitudes are **not comparable across features**: "190 per cuerda" vs "17 per
+  year" reflects each feature's units as much as its importance.
+
+By convention the features form a matrix $X$ (rows = examples, columns = features —
+the L02 toolkit table made this promise) and the targets a vector $y$. You will type
+`X` and `y` for the rest of the course.
+
+## Measuring Fit: MSE and R-squared
+
+Two numbers summarize how well a regression predicts, and they answer different
+questions:
+
+| Metric | Units | Question it answers |
+|--------|-------|---------------------|
+| **MSE** | target units, squared (kg times kg) | how large are the errors, absolutely? |
+| **$R^2$** | unitless, $\leq 1$ | how much better than predicting the mean? |
+
+$$R^2 = 1 - \frac{\text{MSE of the model}}{\text{MSE of always predicting } \bar{y}}$$
+
+$R^2$ is a *comparison against the laziest baseline*: the model that ignores every
+feature and predicts the training-mean for everyone. $R^2$ of 0 means "no better than
+the mean"; 1 means perfect; and on a **test set it can go negative** — the model can
+genuinely do worse than the mean on data it never saw. The baseline is not a
+formality: a model that cannot beat it has learned nothing, which is why the lab
+makes you fit the baseline first.
+
+::: {.callout-important}
+Both numbers only mean something on **held-out data**. A flexible model can score a
+beautiful $R^2$ on the data it trained on — the hand rule from L02's lab already taught
+you how much that is worth.
+:::
+
+## When to Use / When NOT to Use
+
+- **Use it when:** the target is numeric; relationships are roughly linear in the
+  data's range; you need coefficients a human can read and defend; you want the
+  baseline every fancier model must beat.
+- **Avoid it when:** the target is a category (that is classification — next lesson);
+  the pattern is strongly nonlinear (a line through a curve misleads at both ends);
+  extreme outliers dominate (remember who pulls hardest).
+
+## Common Pitfalls
+
+- **Extrapolation.** The line is fitted on plots of 1-3 cuerdas; predicting a
+  50-cuerda farm extends the line into territory with zero supporting data. The model
+  will happily answer; the answer is unsupported.
+- **Correlation is not causation.** A negative shade coefficient does *not* prove
+  shade reduces yield — maybe shaded plots also sit on steeper, poorer soil. The
+  model summarizes association in this dataset; causal claims need experiments or
+  causal methods (out of scope).
+- **Trusting training $R^2$.** Adding features can only push *training* $R^2$ up, junk
+  included. Judge on the test set — the lab's rooster exercise makes this concrete.
+- **Skipping the residual look.** A curved residual pattern means the linearity
+  assumption is failing somewhere; one plot tells you.
+
+## FAQ / Industry Reality
+
+**"Is fitting a line from 1805 really machine learning?"** — Yes, and not as a
+technicality: hypothesis class, loss, optimization — the same skeleton as a neural
+network with a billion parameters (Unit V). Linear regression is where the skeleton
+is small enough to see. In industry it is often the model that *ships*, because it is
+fast, stable, and explainable to a regulator.
+
+**"Are more features always better?"** — No. Each feature with real signal can help;
+each junk feature adds a small amount of noise for the model to fit. With few
+features the damage is minor (the lab's roosters cost half a point of $R^2$); with
+hundreds, it becomes the central problem of Unit III.
+
+**"My statistics course put p-values and confidence intervals on the slope — where
+are they?"** — Different goal. Statistical inference asks "is this coefficient
+reliably nonzero in the population?"; machine learning asks "does the model predict
+well on unseen data?". Both are legitimate; this course evaluates predictively
+(test-set metrics), and your ESMA toolkit remains the right one for inference
+questions.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Supervised problem | given pairs, find $h^* = \text{argmin}_{h \in H} L(h)$ |
+| Hypothesis class $H$ | the family of candidate functions (here: linear) |
+| Loss / MSE | the score being minimized; squared errors punish big misses |
+| Coefficient | target change per feature unit, others held fixed; sign = story |
+| Residual | actual minus predicted; should look patternless |
+| Baseline | always predict the mean; the model everyone must beat |
+| $R^2$ | fraction of variance explained vs the baseline; can be negative on test |
+| Fitting | closed form (normal equation) or gradient descent (the general tool) |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 4 (the linear regression
+  half) — including the normal-equation and gradient-descent details this lesson
+  deferred.
+- **Docs:** [scikit-learn's linear models guide](https://scikit-learn.org/stable/modules/linear_model.html)
+  — `LinearRegression` and its many relatives.
+- **Text, deeper:** James et al., *An Introduction to Statistical Learning*, ch. 3 —
+  the gentler cousin of the syllabus's *Elements of Statistical Learning*; read it
+  when you want the inference side too.

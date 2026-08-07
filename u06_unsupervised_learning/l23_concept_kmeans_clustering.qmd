@@ -1,0 +1,240 @@
+---
+title: "K-Means Clustering & Similarity"
+unit: "VI"
+lesson: "23"
+type: concept
+tags: [unsupervised-learning, clustering, k-means, similarity, silhouette, scikit-learn]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** the unsupervised clustering problem -- group points by similarity with no
+  labels -- and recognize that a clustering is a partition whose labels are arbitrary
+  integers. *(Understand)*
+- **Explain** K-Means as the Lloyd iteration: assign each point to its nearest centroid
+  (Euclidean similarity), recenter each centroid on its points' mean, repeat. *(Understand)*
+- **Apply** K-Means with scikit-learn -- `fit_predict`, `cluster_centers_`, `transform`,
+  `predict` -- and read the assignments and distances. *(Apply -- in the lab)*
+- **Choose** the number of clusters `k` with the elbow and, more reliably, the **silhouette
+  score**, and explain why inertia alone cannot. *(Analyze)*
+- **Diagnose** K-Means' failure modes: unscaled features, sensitivity to initialization, and
+  the round-blob assumption that breaks on crescent-shaped data. *(Analyze)*
+
+> **Where this sits:** **Unit VI opens here.** Units I-V (supervised learning, then deep
+> learning) all needed a labeled `y`; Exam II closes that arc. Now we turn to **unsupervised**
+> learning -- structure with no labels -- starting with clustering. · next: `L24 — Hierarchical
+> & Density-Based Clustering`, which handles the shapes K-Means cannot. Back to **scikit-learn**
+> (PyTorch was the deep-learning unit only).
+>
+> **Hands-on:** [Lab — Finding Groups Without Labels](l23_lab_kmeans_clustering.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u06_unsupervised_learning/l23_lab_kmeans_clustering.ipynb)
+
+## Why This Matters
+
+Every algorithm so far -- regression, logistic regression, trees, neural networks -- needed an
+answer key: a labeled `y` to learn from. But most data in the world arrives **unlabeled**.
+Customers with no segment, photos with no caption, sensor logs with no fault tag. **Unsupervised
+learning** asks the question that does not need a teacher: *given only `X`, what structure is
+already in the data?*
+
+The first and most common answer is **clustering** -- put similar things together -- and the
+whole game turns on one word: **similar**. K-Means gives the simplest possible meaning to it
+("close to the same center") and rides that single idea to a fast, scalable algorithm that
+powers customer segmentation, image compression, and anomaly detection. We build it, learn to
+choose how many clusters to ask for, and then find exactly where its simplicity gives out.
+
+::: {.callout-tip title="Analogy"}
+Imagine dropping 1500 pins on a map and being told to mark four "neighborhoods," with no
+addresses or names to go on. You would plant four flags, assign each pin to its nearest flag,
+then move each flag to the middle of the pins that chose it -- and repeat until the flags settle.
+That is K-Means exactly. "Similar" means "nearest flag"; a neighborhood is just whoever is
+closest to the same center.
+:::
+
+## From Labels to Structure
+
+Supervised learning fit a map from `X` to a known `y`. Unsupervised learning is handed only
+`X` and must find structure on its own. **Clustering** is the canonical task: partition the
+points into groups so that members of a group are more similar to each other than to members of
+other groups. There is no single right answer and no accuracy to report -- different notions of
+"similar" yield different, equally valid clusterings.
+
+Clustering shows up everywhere: **customer segmentation** (group buyers by behavior),
+**anomaly detection** (a point far from every cluster is suspicious), **image compression**
+(replace each pixel with its cluster's mean color), and **semi-supervised learning** (cluster,
+then propagate a handful of labels within each group). All of them rest on the same primitive:
+a way to measure similarity.
+
+## Similarity Is Distance
+
+For K-Means, "similar" means one specific thing: **small Euclidean distance**. The distance
+between points $x$ and $x'$ in feature space is
+
+$$
+d(x, x') = \lVert x - x' \rVert = \sqrt{\textstyle\sum_j (x_j - x'_j)^2},
+$$
+
+and a point belongs to whichever **centroid** -- cluster center -- it is closest to. In the lab,
+`transform` reports each point's distance to every centroid, and we turn distance into an
+**affinity** with $1/(1+d)$: 1 when you sit on the centroid, fading to 0 as you move away.
+
+This is a choice, not a law. Other algorithms use other notions of similarity -- connected
+density (DBSCAN) or a linkage rule between whole clusters (hierarchical) -- and they find
+different kinds of groups. That is L24. K-Means' commitment to "distance to a center" is both
+its speed and its blind spot.
+
+## K-Means: The Lloyd Iteration
+
+Given a chosen number of clusters `k`, K-Means runs a beautifully simple loop:
+
+1. **Initialize** `k` centroids (k-means++ picks spread-out starting points -- see below).
+2. **Assign** each point to its nearest centroid (the Euclidean similarity rule).
+3. **Update** each centroid to the **mean** of the points now assigned to it.
+4. Repeat steps 2-3 until the assignments stop changing.
+
+That is it -- alternate "assign to nearest" and "recenter on the mean." This is **Lloyd's
+algorithm**, and it is guaranteed to **converge**: each step can only lower the **inertia** (the
+within-cluster sum of squared distances), and inertia cannot go below zero, so the loop must
+settle.
+
+```{mermaid}
+flowchart TD
+  I["Initialize k centroids<br/>(k-means++)"] --> A["Assign each point to<br/>its nearest centroid"]
+  A --> U["Update each centroid to the<br/>mean of its assigned points"]
+  U --> Q{"Did any<br/>assignment change?"}
+  Q -- "yes" --> A
+  Q -- "no" --> D["Converged:<br/>final clusters + centroids"]
+```
+
+$$
+\text{inertia} = \sum_{i=1}^{k} \; \sum_{x \in C_i} \lVert x - c_i \rVert^2
+\qquad (C_i = \text{cluster } i,\; c_i = \text{its centroid})
+$$
+
+**Convergence is not optimality.** Lloyd settles to a *local* minimum that depends on where the
+centroids started. A bad initialization can leave two centroids splitting one true blob while
+another blob goes unclaimed. Two standard guards: **k-means++** initialization (picks starting
+centroids far apart -- scikit-learn's default) and **`n_init`** (run the whole thing several
+times from different starts and keep the lowest-inertia result, also the default).
+
+## How Many Clusters?
+
+K-Means cannot tell you `k`; you must supply it. The tempting idea -- pick the `k` with the
+smallest inertia -- **fails**, because inertia *only ever decreases* as `k` grows (more centroids
+always sit closer to the points; at `k = n` it reaches zero). Two honest tools instead:
+
+- **The elbow method.** Plot inertia against `k` and look for the bend where the steep drop
+  flattens out. In the lab, inertia plunges from 14371 to 1352 by `k=4`, then crawls -- the
+  elbow sits at **k=4**, the true number of blobs. The elbow is read by eye, so it is a guide,
+  not a verdict.
+- **The silhouette score.** For each point, compare its mean distance to its own cluster ($a$)
+  against its mean distance to the nearest *other* cluster ($b$); the point's silhouette
+  coefficient is $(b - a)/\max(a, b)$, between $-1$ and $+1$. The **silhouette score** is the
+  average over all points, and the best `k` is the one that **maximizes** it. In the lab it
+  peaks cleanly at **k=4 (0.627)** -- a quantitative answer where the elbow only suggested one.
+
+$$
+s(x) = \frac{b - a}{\max(a, b)} \qquad
+\begin{cases} \;\to +1 & \text{deep inside its cluster} \\ \;\to 0 & \text{on a boundary} \\ \;\to -1 & \text{likely mis-assigned} \end{cases}
+$$
+
+The silhouette is more expensive (it weighs every point against every cluster) but, unlike
+inertia, it does not simply reward more clusters -- so it can actually choose.
+
+## When K-Means Breaks
+
+K-Means' single tool -- distance to a center -- carries a hidden assumption: clusters are
+**round, similar-size, similar-density blobs**. When that holds, it is fast and excellent (in the
+lab it matches the true grouping at ARI 0.962). When it does not, it fails, and the failures are
+predictable:
+
+- **Unscaled features.** Distance is dominated by whatever feature has the largest numeric range.
+  If one feature runs 0-1000 and another 0-1, K-Means effectively ignores the small one. In the
+  lab, the same data clusters at ARI 0.334 raw versus **1.0 after `StandardScaler`** -- always
+  scale first (the standardization of L08/L10).
+- **Non-spherical shapes.** Two interleaved crescents have a clear structure, but K-Means can
+  only carve space with straight boundaries around centers, so it slices each crescent in half.
+  In the lab it collapses from ARI 0.962 on blobs to **0.239 on two moons**.
+- **Varying sizes or densities.** A tight dense cluster next to a large sparse one confuses the
+  "nearest center" rule, which has no concept of density.
+
+```{mermaid}
+flowchart TD
+  S{"What do the clusters<br/>look like?"}
+  S -- "round, similar-size blobs;<br/>you can guess k" --> K["K-Means<br/>(fast, scalable; scale first)"]
+  S -- "arbitrary shapes, or k unknown,<br/>or you need outliers flagged" --> O["Density / hierarchical<br/>clustering -> L24"]
+```
+
+That last failure -- the crescents -- is the cliffhanger into **L24**, where DBSCAN clusters by
+connected density and hierarchical clustering merges by linkage, both wrapping the shapes K-Means
+cuts in two.
+
+## Common Pitfalls
+
+- **Reading meaning into cluster numbers.** The labels `0,1,2,3` are arbitrary tags; cluster `0`
+  in one run may be cluster `2` in the next. Compare clusterings by their grouping, not their
+  integers.
+- **Picking `k` by minimizing inertia.** Inertia always falls with more clusters -- it bottoms out
+  at `k = n`. Use the elbow or the silhouette instead.
+- **Forgetting to scale.** K-Means is a distance algorithm; an unscaled large-range feature
+  hijacks every assignment. Standardize first.
+- **Trusting one random start.** A single initialization can land in a bad local optimum; rely on
+  k-means++ and `n_init` (both on by default in scikit-learn).
+- **Forcing K-Means on the wrong shape.** If the groups are elongated, nested, or wildly
+  different in density, no amount of tuning fixes the round-blob assumption -- change the
+  algorithm.
+
+::: {.callout-note title="Deep Dive: why inertia can only fall (Optional)" collapse="true"}
+
+Each Lloyd step lowers inertia for two reasons. The **assignment** step moves every point to its
+nearest centroid, which can only shrink (or hold) that point's squared distance. The **update**
+step sets each centroid to the mean of its cluster, and the mean is exactly the point that
+minimizes the sum of squared distances to a set of points. So both steps are downhill on the
+same objective, inertia is bounded below by 0, and the iteration converges -- to a *local*
+minimum, which is why initialization (k-means++, `n_init`) matters. Adding a cluster gives the
+optimizer strictly more freedom, so the best achievable inertia can only drop as `k` rises --
+exactly why you cannot select `k` by minimizing it.
+:::
+
+## FAQ / Industry Reality
+
+**"How do I choose `k` in practice?"** -- Combine signals: run the silhouette score across a
+range of `k`, sanity-check with the elbow, and weigh domain knowledge (you often *know* you want
+"3 customer tiers"). The silhouette is the most reliable single number, but clustering is
+exploratory -- there is rarely one correct `k`.
+
+**"K-Means or something fancier?"** -- K-Means first: it is fast, scalable, and excellent when
+clusters are roughly round and you can guess `k`. Reach for DBSCAN (L24) when shapes are
+arbitrary or you need outliers flagged, hierarchical clustering when you want a full merge tree,
+and Gaussian mixtures (L25) when you want soft, probabilistic memberships.
+
+**"Is clustering the same as classification?"** -- No. Classification learns a labeled `y` and
+predicts it; clustering invents groups from `X` alone with no ground truth. You can *use* clusters
+as features or pseudo-labels afterward, but the clustering step itself is unsupervised.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Unsupervised learning | find structure in `X` with no labels `y` |
+| Clustering | partition points into similar groups; labels are arbitrary integers |
+| Similarity (K-Means) | Euclidean **distance to a centroid**; affinity = 1/(1+d) |
+| Lloyd iteration | assign to nearest centroid, recenter on the mean, repeat to convergence |
+| Inertia | within-cluster sum of squared distances; K-Means minimizes it; always falls with `k` |
+| Choosing `k` | the **elbow** (bend in inertia) and the **silhouette score** (maximize it) |
+| k-means++ / `n_init` | spread-out init + multiple restarts to dodge bad local optima |
+| Scaling | mandatory -- the largest-range feature hijacks distance otherwise |
+| Failure mode | round-blob assumption: breaks on crescents/elongated/varying-density (-> L24) |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 9 -- the K-Means section (centroids,
+  inertia, the elbow and silhouette, the limits) this lesson follows.
+- **Docs:** [scikit-learn's clustering guide](https://scikit-learn.org/stable/modules/clustering.html#k-means)
+  -- K-Means, the assumptions it makes, and a gallery of where it succeeds and fails.
+- **Paper:** Arthur & Vassilvitskii (2007), *k-means++: The Advantages of Careful Seeding* -- the
+  initialization scikit-learn uses by default.

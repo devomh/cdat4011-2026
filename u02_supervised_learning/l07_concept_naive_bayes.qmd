@@ -1,0 +1,259 @@
+---
+title: "Naive Bayes: The Independence Assumption That Reads Your Texts"
+unit: "II"
+lesson: "07"
+type: concept
+tags: [classification, naive-bayes, generative-models, text-classification, bag-of-words, laplace-smoothing]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **State** the naive conditional-independence assumption and **explain** why it is needed — the
+  combinatorial wall that makes the full likelihood unestimable. *(Understand)*
+- **Compute** a Naive Bayes prediction by hand from a small frequency table: prior times per-feature
+  likelihoods, then normalize. *(Apply)*
+- **Explain** the zero-frequency problem and how Laplace smoothing fixes it. *(Understand)*
+- **Apply** Naive Bayes to text — turn documents into a bag of words, train it, and **interpret** the
+  per-word evidence. *(Apply — in the lab)*
+- **Contrast** Naive Bayes (independent features) with full-covariance GDA (L06) and with
+  discriminative logistic regression — the cost and the payoff of being "naive." *(Analyze)*
+
+> **Where this sits:** after `L06 — Gaussian Discriminant Analysis` · next: the unit's last algorithm,
+> Support Vector Machines (L08).
+>
+> **Hands-on:** [Lab — Naive Bayes](l07_lab_naive_bayes.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u02_supervised_learning/l07_lab_naive_bayes.ipynb)
+
+## Why This Matters
+
+The spam filter is the first machine-learning system most people ever touched. A text message is just
+a pile of words; the filter has read thousands of past messages, each labeled *spam* or *not*. How
+does counting words turn into a verdict on a brand-new message?
+
+The answer is the algorithm in this lesson. Naive Bayes keeps every piece of the machinery from L06 —
+Bayes' rule, the prior, the MAP decision — and adds one bold shortcut that lets the same recipe scale
+from two mango measurements to the **tens of thousands of word-features** of a document. That shortcut
+is wrong, in a way we will make precise, and the classifier works astonishingly well anyway.
+
+::: {.callout-tip title="Analogy"}
+Picture a juror who weighs each piece of testimony *on its own* — "how typical is this clue of a
+guilty defendant? of an innocent one?" — and then multiplies the suspicions, clue after clue, never
+asking whether the witnesses might be repeating each other. Fast, a little credulous, and in practice
+uncannily effective. That juror is Naive Bayes; the credulity is the *naive* assumption.
+:::
+
+## From a Full Model to a Naive One
+
+L06 built a generative classifier by Bayes' rule: to label a point $\mathbf{x}$, compare the classes
+on **prior times likelihood** and pick the largest — the MAP rule,
+
+$$\text{predict } \underset{C}{\text{argmax}} \; P(C)\, P(\mathbf{x} \mid C).$$
+
+GDA modeled the likelihood $P(\mathbf{x} \mid C)$ as one **multivariate** Gaussian per class, covariance
+and all, so it captured how the features move *together* (longer mangoes weigh more). That richness has
+a price. With many features the likelihood is the probability of the *whole combination at once*, and a
+modest 30 yes/no features already make $2^{30} \approx$ a billion combinations — almost none of which
+your training set has ever seen. For text, with one feature per vocabulary word, the combination space
+is astronomical. Estimating a likelihood per combination is hopeless.
+
+Naive Bayes breaks the deadlock with one simplification: **assume the features are conditionally
+independent given the class.** Then the joint likelihood *factors* into a product of one-feature
+likelihoods —
+
+$$P(x_1, x_2, \dots, x_p \mid C) = \prod_{k=1}^{p} P(x_k \mid C).$$
+
+Each feature's likelihood is now estimated *separately* — count it, or fit a one-feature distribution —
+and the pieces just multiply. In L06's language: **erase the off-diagonal covariance.** GDA's full
+covariance matrix becomes a diagonal one; the model stops tracking correlations and looks at each
+feature alone. That is the whole idea. The assumption is called *naive* because real features do
+correlate; the surprise, confirmed in the lab, is how little the classifier seems to mind.
+
+## Counting Likelihoods: Does the League Play?
+
+When features are categorical, the per-feature likelihoods are just **counts**. The Humacao beach
+volleyball league's last 12 scheduled days, by weather:
+
+| Weather | Played? | | Weather | Played? |
+|---------|---------|-|---------|---------|
+| sunny | yes | | sunny | yes |
+| sunny | yes | | overcast | yes |
+| sunny | yes | | overcast | no |
+| overcast | yes | | rainy | no |
+| overcast | yes | | rainy | no |
+| rainy | yes | | sunny | no |
+
+Today is **rainy** — does the league play? Count what you need: the league played on 8 of 12 days
+($P(\text{yes}) = 8/12$) and skipped 4 ($P(\text{no}) = 4/12$); among the 8 played days exactly 1 was
+rainy ($P(\text{rainy} \mid \text{yes}) = 1/8$); among the 4 skipped days, 2 were rainy
+($P(\text{rainy} \mid \text{no}) = 2/4$). Then prior times likelihood, per class:
+
+$$P(\text{yes}) \cdot P(\text{rainy} \mid \text{yes}) = \tfrac{8}{12} \cdot \tfrac{1}{8} = \tfrac{1}{12} \approx 0.083$$
+$$P(\text{no}) \cdot P(\text{rainy} \mid \text{no}) = \tfrac{4}{12} \cdot \tfrac{2}{4} = \tfrac{1}{6} \approx 0.167$$
+
+The "no" score wins — MAP says the league stays home — and normalizing the two scores so they sum to 1
+gives honest posteriors: $P(\text{no} \mid \text{rainy}) = 2/3$, $P(\text{yes} \mid \text{rainy}) = 1/3$.
+With a single feature the naive assumption never had to fire; add a second column (was it a holiday?)
+and its likelihood would simply *join the product* — that is the entire upgrade, and it is exactly what
+the lab does at scale with thousands of word-columns.
+
+## The Zero-Frequency Problem and Laplace Smoothing
+
+Imagine a record in which the league had *never* skipped a sunny day (our 12-day table has one such
+day, so really $P(\text{sunny} \mid \text{no}) = 1/4$; suppose instead it were $0/4$). Today is sunny.
+That single zero would annihilate the entire "no" product — one unseen combination vetoes the class
+outright, no matter how strong the other evidence. In text this happens constantly: a word that never
+appeared in the spam training set would veto *spam* for any message containing it.
+
+The standard fix is **Laplace smoothing** (add-one smoothing): add one phantom count to every cell, so
+no estimated probability is ever exactly zero. It is cheap insurance, on by default as a tunable
+`alpha` in scikit-learn's count-based Naive Bayes. The lab shows a message whose verdict *flips* when
+smoothing is turned on — one unseen word vetoes a class to zero without it.
+
+## Continuous Features: Gaussian Naive Bayes
+
+Lengths and weights have no cells to count. **Gaussian Naive Bayes** replaces each count-based
+likelihood with a normal density: for each class and each feature, fit a Gaussian to that class's
+training values — just a mean and a standard deviation — then read $P(x_k \mid C)$ off that bell curve.
+Everything else — priors, the product, MAP — is unchanged.
+
+This is precisely **GDA with a diagonal covariance**. L06's LDA and QDA fit a *full* covariance per
+class and so model the length-weight tilt; Gaussian Naive Bayes fits only the per-feature variances and
+assumes the tilt away. On the mangoes, whose two features really are correlated, that costs a couple of
+points of accuracy — you measure exactly how much in the lab. The naive assumption is not free; it is
+just often cheap.
+
+## Text Classification: Where Naive Bayes Earns Its Living
+
+Text is the application that made this algorithm famous, and it is where the independence assumption
+stops being a liability and becomes the only thing that makes the problem tractable.
+
+First, turn a document into numbers. The **bag of words** representation builds a vocabulary from the
+training messages and counts how many times each word appears in each message — one feature per word,
+order discarded. A corpus of a few hundred short messages already has a vocabulary of a few hundred
+words, so every message becomes a vector with hundreds of features, almost all of them zero. Modeling
+the *joint* distribution over hundreds of word-counts is the combinatorial wall again; the naive
+assumption walks through it by treating each word as an independent vote.
+
+```{mermaid}
+flowchart LR
+  D["a new message:<br/>'free prize claim now'"] --> W["bag of words:<br/>free=1 prize=1 claim=1 now=1"]
+  W --> S["P(word | spam) for each word<br/>times the spam prior"]
+  W --> H["P(word | ham) for each word<br/>times the ham prior"]
+  S --> M["compare the two products"]
+  H --> M
+  M --> V["MAP verdict:<br/>spam or ham"]
+```
+
+With counts as features, the right variant is **multinomial Naive Bayes**: the per-word likelihood
+$P(\text{word} \mid C)$ is estimated as that word's share of all words in the class's training messages
+(Laplace-smoothed), and a message's class score multiplies in one factor per word it contains. Training
+is just counting, so it finishes essentially instantly even on enormous corpora.
+
+Why did Naive Bayes dominate spam filtering for years? Spam is its perfect storm: tens of thousands of
+word-count features (independence is wrong but workable), heavy class imbalance handled naturally by the
+prior, training fast enough to personalize per user, and updates as cheap as recounting. The lab builds
+a small spam filter, reads off the words it found most spam-like, and reproduces one of its verdicts by
+hand.
+
+## The Naive Bayes Family
+
+"Naive Bayes" is a recipe, not a single model: pick the per-feature likelihood that matches your data.
+
+| Variant | Per-feature likelihood | Use it for |
+|---------|------------------------|-----------|
+| **GaussianNB** | a normal density (mean, standard deviation) | continuous features (lengths, weights) |
+| **MultinomialNB** | a word's share of the class's counts | counts — text, bag of words |
+| **BernoulliNB** | present-or-absent probability | binary features (did the word occur at all) |
+
+Same Bayes' rule, same MAP, same independence assumption — only the likelihood changes.
+
+## Naive Bayes Among the Classifiers
+
+Naive Bayes sits on the **generative** side of the split L05 named: it models what each class *looks
+like* — $P(\mathbf{x} \mid C)$ and $P(C)$ — and lets Bayes' rule produce the boundary, where logistic
+regression (L04) and the Perceptron (L05) model the boundary $P(C \mid \mathbf{x})$ directly.
+
+| | Generative (Naive Bayes, GDA) | Discriminative (logistic) |
+|---|------------------------------|---------------------------|
+| Learns | what each class *looks like* | what *separates* the classes |
+| Models | $P(\mathbf{x} \mid C)$ and $P(C)$ | $P(C \mid \mathbf{x})$ directly |
+| Training | counting / means and spreads — instant | iterative gradient descent |
+| Strength | tiny data, many features, text | calibrated probabilities, correlated features |
+
+And within the generative family, Naive Bayes is GDA's thrifty cousin: GDA spends parameters on a full
+covariance and captures correlations; Naive Bayes drops them for speed and scale. Use the full model
+when features are few and correlated; use the naive one when they are many and cheap to count.
+
+## When to Use / When NOT to Use
+
+- **Use it when:** features are counts or categories (text!); training data is scarce (per-feature
+  means and counts stabilize on a handful of examples); you need a model trained and serving in
+  milliseconds; you want a fast, honest baseline before anything fancier.
+- **Avoid it when:** features are strongly redundant (ten copies of one signal get multiplied as ten
+  independent witnesses — overconfidence by construction); or you need well-calibrated probabilities
+  rather than a good argmax.
+
+## Common Pitfalls
+
+- **Reading Naive Bayes probabilities as calibrated.** The independence shortcut double-counts
+  correlated evidence, so posteriors crowd toward 0 and 1 — you will watch one pin to $1.000$ in the
+  lab. The *ranking* (which class wins) survives; the exact $0.98$ should not be quoted to a
+  decision-maker without a calibration check (Unit III).
+- **Forgetting smoothing with count data.** One unseen word-class pair should not veto a class; that is
+  what Laplace smoothing is for.
+- **Dismissing it for its assumption.** "Features are never independent" is true and beside the point —
+  Naive Bayes is the canonical example of a wrong model that predicts well, and a wrong-but-fast
+  baseline is often exactly what the moment needs.
+
+::: {.callout-note title="Deep Dive: why implementations sum logs (Optional)" collapse="true"}
+A text classifier multiplies *thousands* of per-word likelihoods, and the product underflows to exactly
+$0.0$ in floating point long before the end. Every real implementation therefore works with logarithms:
+maximize $\log P(C) + \sum_k \log P(x_k \mid C)$, a sum of moderate negative numbers, which is
+monotonically equivalent to maximizing the product — the MAP winner is identical. The lab's by-hand
+computation does exactly this, comparing two log-scores like $-21.6$ and $-35.9$, and matches
+scikit-learn's `predict_log_proba`. The habit is worth copying: when probabilities multiply, sum logs.
+:::
+
+## FAQ / Industry Reality
+
+**"Naive Bayes or logistic regression — which do I try first?"** Professionals often run both; they
+cost minutes. Reach for Naive Bayes first when data is small, features are counts or text, or you need
+a trained model *now*; prefer logistic regression when you have data to spare and the probabilities
+themselves matter. The lab stages this exact comparison on a bag of words.
+
+**"If the independence assumption is false, why trust the answer?"** Because classification only needs
+the *ranking* of the class scores to be right, not their exact values. Correlated evidence skews the
+magnitudes — that is the overconfidence — but usually leaves the winner unchanged. A wrong model can
+still make the right call.
+
+**"Why did Naive Bayes dominate spam filtering for years?"** Tens of thousands of word features, class
+imbalance the prior handles for free, training fast enough to personalize per user, and updates as
+cheap as recounting. The first mass-deployed ML system most people ever touched was this lesson's
+algorithm reading their inbox.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Naive assumption | features independent given the class; per-feature likelihoods multiply |
+| Why it is needed | the full joint over many features is unestimable (combinatorial wall) |
+| In L06's terms | Naive Bayes is GDA with the off-diagonal covariance erased (diagonal) |
+| Count likelihoods | $P(\text{feature} \mid C)$ from counts; the volleyball table |
+| Laplace smoothing | add phantom counts so no unseen value vetoes a class to zero |
+| Gaussian NB | per-class, per-feature normal densities — continuous features |
+| Multinomial NB | per-word count shares — text, bag of words |
+| Overconfidence | independence double-counts correlated evidence; ranking survives, calibration does not |
+
+## Where to Go Deeper
+
+- **Course text:** James et al., *An Introduction to Statistical Learning*, ch. 4 — Naive Bayes beside
+  LDA, QDA, and logistic regression.
+- **Docs:** [scikit-learn's Naive Bayes guide](https://scikit-learn.org/stable/modules/naive_bayes.html)
+  — Gaussian, multinomial, and Bernoulli variants and when each applies.
+- **Classic:** Paul Graham, ["A Plan for Spam"](https://www.paulgraham.com/spam.html) (2002) — the essay
+  that put this lesson's algorithm into every inbox; readable in one sitting.
+

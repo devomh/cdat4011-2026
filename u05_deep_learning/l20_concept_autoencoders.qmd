@@ -1,0 +1,157 @@
+---
+title: "Autoencoders & Representation Learning"
+unit: "V"
+lesson: "20"
+type: concept
+tags: [deep-learning, pytorch, autoencoder, encoder-decoder, latent-space, representation-learning, denoising, unsupervised]
+difficulty: intermediate
+duration: "90 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** an autoencoder (encoder -> bottleneck -> decoder) and what its **reconstruction loss**
+  trains -- with no labels. *(Understand)*
+- **Explain** why the **bottleneck** forces the network to learn structure rather than copy, and what
+  the **latent space** represents. *(Understand)*
+- **Build and train** an autoencoder and a **denoising** variant in PyTorch, and read the reconstruction
+  quality. *(Apply -- in the lab)*
+- **Use** the learned latent code as a **representation** (visualize it; classify from it) and explain
+  why it is useful. *(Apply / Analyze)*
+
+> **Where this sits:** after `L19 — CNN Architectures & Transfer Learning`, which reused features learned
+> from *labels*. This is Unit V's first **unsupervised** network: it learns useful features from the
+> data alone. · next: `L21 — Attention Mechanisms`, which lets a model choose what to focus on.
+>
+> **Hands-on:** [Lab — Autoencoders and the Latent Space](l20_lab_autoencoders.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u05_deep_learning/l20_lab_autoencoders.ipynb)
+
+## Why This Matters
+
+Every network so far learned from **labels** -- L19 even reused the features that ImageNet's labels paid
+for. But labels are expensive and most data has none. An **autoencoder** needs no labels at all: it
+learns by trying to **reconstruct its own input**, supervising itself.
+
+The trick is a deliberate handicap. Funnel each image through a layer far too narrow to carry all its
+pixels -- a **bottleneck** -- and the network cannot simply copy the input across. To rebuild the image
+from those few numbers, it has to discover the structure that lets a short code stand in for the whole
+picture. The analogy: a sketch artist who has drawn thousands of faces can capture a new one in a few
+strokes, because experience taught them which features matter. An autoencoder is forced to invent those
+strokes. The short code it learns -- the image's place in the **latent space** -- turns out to be a
+genuinely useful **representation**.
+
+## What an Autoencoder Is
+
+An autoencoder is two networks back to back. The **encoder** maps the input to a small **latent code**;
+the **decoder** maps that code back to a reconstruction of the input. Train it by minimizing the
+**reconstruction loss** -- how far the output is from the input, typically the mean squared error. The
+target is the input itself, so there are **no labels**:
+
+```{mermaid}
+flowchart LR
+  inp["input<br/>784 pixels"] --> e1["encoder<br/>(compress)"]
+  e1 --> z["bottleneck<br/>latent code (32)"]
+  z --> d1["decoder<br/>(expand)"]
+  d1 --> out["reconstruction<br/>784 pixels"]
+  out -. "reconstruction loss (MSE)" .-> inp
+```
+
+The lab's encoder funnels 784 pixels down to **32** numbers and its decoder expands them back; trained
+on FashionMNIST it reconstructs each image at a test MSE of about **0.018** -- blurred but plainly the
+same garment, rebuilt from 32 numbers.
+
+## Why the Bottleneck Matters
+
+The bottleneck is the whole point. If the latent layer were as wide as the input (or wider), the network
+could learn the **identity** -- copy every pixel through -- and learn nothing. Making the latent
+**smaller than the input** (an **undercomplete** autoencoder) blocks that shortcut: the network must
+throw away what it can reconstruct and keep what it cannot, which is exactly the data's structure. The
+bottleneck size is a capacity dial, the same idea as L09's flexibility: too wide and the autoencoder
+just memorizes pixels; narrow enough and it is forced to generalize.
+
+Each input lands at a point in the **latent space** -- the space of possible codes. Because similar
+images need similar codes to reconstruct well, that space organizes itself: in the lab, shrinking the
+bottleneck to just **2** numbers and plotting them shows the clothing classes falling into distinct
+regions, even though training never saw a label. A logistic-regression classifier on those 2 unsupervised
+numbers already reaches about **0.64** accuracy (chance is 0.10).
+
+## Representation Learning
+
+That is the real payoff. The encoder is a **feature extractor** -- like L19's pretrained backbone, but
+trained on the data itself with no labels. Its latent code is a **representation** you can reuse:
+visualize it, cluster it, or feed it to a simple classifier. In the lab, the 32-number code classified
+FashionMNIST at about **0.79** with plain logistic regression, against **0.83** for all 784 raw pixels
+-- a 24x compression that keeps most of the signal, learned with zero labels. Learning useful features
+from unlabeled data this way is **representation learning**, and it is how much of modern AI is
+pretrained.
+
+An autoencoder is the **nonlinear** generalization of linear dimensionality reduction. The classic linear
+method is **PCA**; an autoencoder with nonlinear layers can capture curved structure a linear projection
+cannot. (PCA itself is Unit VII -- L26; here it is just the named linear cousin -- you will meet how it
+works there.)
+
+## Denoising Autoencoders
+
+A small change unlocks a second use. Feed the autoencoder a **corrupted** image but ask it to reconstruct
+the **clean** one. Now it cannot just compress and copy -- it must learn what the noise is *not*, the
+underlying structure, so it can rebuild a clean image from a damaged one. This is a **denoising
+autoencoder**, and it cleans inputs it has never seen: in the lab, noise pushed test images to MSE
+**0.118** from clean, and the denoiser pulled them back to **0.024** -- a roughly fivefold cut. Corrupting
+the input is also a powerful regularizer; the features a denoiser learns tend to be more robust than those
+from plain reconstruction.
+
+## Common Pitfalls
+
+- **A bottleneck that is too wide.** If the latent is as large as the input, the autoencoder can learn the
+  identity and compress nothing. The bottleneck must be narrower than the input.
+- **Expecting labels.** There are none -- the input is the target. An autoencoder is unsupervised; do not
+  reach for `y`.
+- **The wrong output for the data.** Pixels in [0,1] pair with a sigmoid output and MSE (or binary
+  cross-entropy); the wrong activation/loss reconstructs poorly.
+- **Reading the latent as "the" representation.** What the code captures depends on the architecture,
+  bottleneck size, and loss -- there is no single canonical latent space.
+- **Confusing reconstruction with usefulness.** A tiny MSE does not guarantee a good downstream
+  representation, nor the reverse; measure the thing you actually care about.
+
+## FAQ / Industry Reality
+
+**"What are autoencoders actually used for?"** -- Compression, **denoising**, **anomaly detection** (a
+high reconstruction error flags an outlier), and **pretraining** -- learning features from unlabeled data
+before fine-tuning on a small labeled set. Their probabilistic cousin, the **variational autoencoder**,
+adds **generation** (sampling new images); that is beyond this intro.
+
+**"How big should the bottleneck be?"** -- A hyperparameter you tune. Too small and reconstructions blur;
+too large and the code stops compressing. The lab sweeps it as a dial.
+
+**"Autoencoder or PCA?"** -- PCA is the fast, linear baseline; an autoencoder is the nonlinear, more
+flexible (and more expensive) generalization. If a linear projection is enough, PCA (Unit VII) wins on
+simplicity.
+
+**"Do these ideas scale?"** -- Yes -- self-supervised pretraining (learning from unlabeled data) is the
+backbone of modern large models. Doing it at scale, with contrastive and masked-prediction objectives, is
+the CDAT 4013 lab's and the research literature's territory.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---|---|
+| Autoencoder | encoder -> bottleneck -> decoder, trained to reconstruct its own input (no labels) |
+| Encoder / decoder | compress the input to a latent code / expand the code back to the input |
+| Bottleneck | the narrow latent layer; smaller than the input (undercomplete) forces compression |
+| Reconstruction loss | MSE between input and output; the training target |
+| Latent space | where each input lands as a short code; organizes by similarity |
+| Representation learning | the latent code is a reusable, label-free feature vector |
+| Denoising autoencoder | corrupt the input, reconstruct the clean original -> robust features |
+| vs PCA | an autoencoder is the nonlinear generalization of linear PCA (L26) |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 17 -- autoencoders (undercomplete, denoising,
+  variational) with PyTorch/Keras examples.
+- **Docs:** the [PyTorch examples](https://github.com/pytorch/examples) repository's autoencoder/VAE
+  models -- minimal, runnable encoder/decoder code.
+- **Foundational:** Vincent et al. (2008), *Extracting and Composing Robust Features with Denoising
+  Autoencoders* -- the denoising idea; and a modern self-supervised-learning overview for where
+  representation learning went next.

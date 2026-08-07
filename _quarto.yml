@@ -1,0 +1,104 @@
+project:
+  type: website
+  render:                 # .ipynb excluded: notebooks are artifacts, .md is the page source
+    - "*.qmd"
+    - "**/*.qmd"
+    - "**/*.md"
+
+website:
+  title: "CDAT 4011 — Machine Learning"
+  site-url: https://devomh.github.io/cdat4011-2026/
+  page-navigation: true
+  sidebar:
+    style: docked
+    search: true
+    contents:
+      - index.qmd
+      # Modules are added here as lessons are published, grouped by unit.
+      # Reset 2026-06-14 for the deep-learning redesign — units repopulate as
+      # lessons are regenerated; teaching order in _syllabus/lesson-schedule.md.
+      - section: "Unit I — Introduction"
+        contents:
+          - u01_introduction/l01_concept_intro_machine_learning.qmd
+          - u01_introduction/l02_concept_ml_toolkit_first_model.qmd
+          - u01_introduction/l02_lab_ml_toolkit_first_model.md
+      - section: "Unit II — Supervised Learning"
+        contents:
+          - u02_supervised_learning/l03_concept_linear_regression.qmd
+          - u02_supervised_learning/l03_lab_linear_regression.md
+          - u02_supervised_learning/l04_concept_logistic_regression.qmd
+          - u02_supervised_learning/l04_lab_logistic_regression.md
+          - u02_supervised_learning/l05_concept_linear_classification.qmd
+          - u02_supervised_learning/l05_lab_linear_classification.md
+          - u02_supervised_learning/l06_concept_gaussian_discriminant_analysis.qmd
+          - u02_supervised_learning/l06_lab_gaussian_discriminant_analysis.md
+          - u02_supervised_learning/l07_concept_naive_bayes.qmd
+          - u02_supervised_learning/l07_lab_naive_bayes.md
+          - u02_supervised_learning/l08_concept_svm.qmd
+          - u02_supervised_learning/l08_lab_svm.md
+      - section: "Unit III — Learning Theory"
+        contents:
+          - u03_learning_theory/l09_concept_bias_variance_cv.qmd
+          - u03_learning_theory/l09_lab_bias_variance_cv.md
+          - u03_learning_theory/l10_concept_regularization_selection.qmd
+          - u03_learning_theory/l10_lab_regularization_selection.md
+          - u03_learning_theory/l11_concept_evaluation_metrics.qmd
+          - u03_learning_theory/l11_lab_evaluation_metrics.md
+      - section: "Unit IV — Ensembles"
+        contents:
+          - u04_ensembles/l12_concept_trees_bagging.qmd
+          - u04_ensembles/l12_lab_trees_bagging.md
+          - u04_ensembles/l13_concept_boosting.qmd
+          - u04_ensembles/l13_lab_boosting.md
+      - section: "Unit V — Deep Learning"
+        contents:
+          - u05_deep_learning/l14_concept_perceptron_neural_networks.qmd
+          - u05_deep_learning/l14_lab_perceptron_neural_networks.md
+          - u05_deep_learning/l15_concept_multilayer_perceptron.qmd
+          - u05_deep_learning/l15_lab_multilayer_perceptron.md
+          - u05_deep_learning/l16_concept_backprop_autodiff.qmd
+          - u05_deep_learning/l16_lab_backprop_autodiff.md
+          - u05_deep_learning/l17_concept_training_deep_networks.qmd
+          - u05_deep_learning/l17_lab_training_deep_networks.md
+          - u05_deep_learning/l18_concept_cnn.qmd
+          - u05_deep_learning/l18_lab_cnn.md
+          - u05_deep_learning/l19_concept_cnn_architectures_transfer.qmd
+          - u05_deep_learning/l19_lab_cnn_architectures_transfer.md
+          - u05_deep_learning/l20_concept_autoencoders.qmd
+          - u05_deep_learning/l20_lab_autoencoders.md
+          - u05_deep_learning/l21_concept_attention.qmd
+          - u05_deep_learning/l21_lab_attention.md
+          - u05_deep_learning/l22_concept_transformers.qmd
+          - u05_deep_learning/l22_lab_transformers.md
+      - section: "Unit VI — Unsupervised Learning"
+        contents:
+          - u06_unsupervised_learning/l23_concept_kmeans_clustering.qmd
+          - u06_unsupervised_learning/l23_lab_kmeans_clustering.md
+          - u06_unsupervised_learning/l24_concept_hierarchical_dbscan.qmd
+          - u06_unsupervised_learning/l24_lab_hierarchical_dbscan.md
+          - u06_unsupervised_learning/l25_concept_gaussian_mixtures_em.qmd
+          - u06_unsupervised_learning/l25_lab_gaussian_mixtures_em.md
+      - section: "Unit VII — Dimensionality Reduction"
+        contents:
+          - u07_dimensionality_reduction/l26_concept_pca.qmd
+          - u07_dimensionality_reduction/l26_lab_pca.md
+          - u07_dimensionality_reduction/l27_concept_factor_analysis_ica.qmd
+          - u07_dimensionality_reduction/l27_lab_factor_analysis_ica.md
+      - section: "Unit VIII — Reinforcement Learning"
+        contents:
+          - u08_reinforcement_learning/l28_concept_reinforcement_learning.qmd
+          - u08_reinforcement_learning/l28_lab_reinforcement_learning.md
+
+format:
+  html:
+    theme: cosmo
+    mermaid:
+      theme: neutral      # default theme gives dark subgraph fills (unreadable in light mode)
+    toc: true
+    toc-depth: 3
+    code-copy: true
+    code-overflow: wrap
+    html-math-method: katex
+
+execute:
+  freeze: auto

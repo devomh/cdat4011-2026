@@ -1,0 +1,218 @@
+---
+title: "From Perceptrons to Neural Networks"
+unit: "V"
+lesson: "14"
+type: concept
+tags: [neural-networks, perceptron, artificial-neuron, activation-functions, xor, deep-learning]
+difficulty: intermediate
+duration: "90 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Describe** an artificial neuron as a weighted sum followed by an activation, and
+  **explain** how it generalizes the perceptron of L05. *(Understand)*
+- **Compare** the common activation functions (step, sigmoid, tanh, ReLU) and **explain**
+  why a smooth activation is needed for gradient-based training. *(Understand / Analyze)*
+- **Demonstrate** that a single linear neuron cannot solve XOR — the linear-separability
+  wall. *(Apply / Analyze — in the lab)*
+- **Build** a hand-wired two-layer network that solves XOR, and **justify** why the
+  *nonlinear* activation is what makes it work. *(Apply / Evaluate — in the lab)*
+
+> **Where this sits:** after `L13 — Boosting` (which closed Unit IV; **Exam I** covers
+> Units I-IV) · this lesson **opens Unit V — Deep Learning** by turning the perceptron you
+> already know into the neuron every deep network is built from. · next: `L15 — Multilayer
+> Perceptrons` (where we finally *train* one, in PyTorch).
+>
+> **Hands-on:** [Lab — Building a Neuron, and Breaking the XOR Wall](l14_lab_perceptron_neural_networks.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u05_deep_learning/l14_lab_perceptron_neural_networks.ipynb)
+
+## Why This Matters
+
+In L05 the **Perceptron** looked like the end of a story: a clean linear classifier with a
+convergence guarantee. Then, in 1969, Marvin Minsky and Seymour Papert pointed out that it
+**cannot even learn XOR** — a problem a child solves instantly — and the disappointment froze
+neural-network research for over a decade.
+
+The twist that restarted the entire field is almost anticlimactic: **stack the neurons**. One
+neuron draws one straight line; a *layer* of neurons feeding a *second* layer can bend, fold,
+and carve regions no single line can. Everything that followed — deep networks, convolutional
+nets, transformers — is that one idea, scaled up. This lesson makes the move from *one neuron*
+to *a network*, and pins down the single ingredient (a **nonlinear** activation) without which
+the trick silently fails.
+
+::: {.callout-tip title="Analogy"}
+A single neuron is **one judge with one yes/no rule** — it can only split the world with a
+straight cut. A network is a **small committee**: the second judge does not vote on the raw
+evidence, but on *what the first judges concluded*. That extra level of indirection is what
+lets the committee reach verdicts no single judge could. The catch — and the reason it took
+until the 1980s — is that each judge's verdict must pass through a *nonlinear* step; otherwise
+the committee is mathematically identical to a single judge.
+:::
+
+## From Perceptron to Neuron
+
+The perceptron of L05 computed a weighted sum of its inputs and fired if the sum cleared a
+threshold. Write that in two steps and you have the **artificial neuron** — the universal
+building block of every neural network:
+
+$$
+z = w_1 x_1 + w_2 x_2 + \dots + w_n x_n + b = \mathbf{w}^\top \mathbf{x} + b,
+\qquad a = \phi(z).
+$$
+
+First a **linear** part (the same $\mathbf{w}^\top\mathbf{x} + b$ score you have seen since
+L03), then a function $\phi$ — the **activation** — applied to it. The perceptron is exactly
+this neuron with $\phi$ fixed to a hard *step*. The single new idea is that **$\phi$ is now a
+free choice**, and that choice changes everything about what a network can do and how it is
+trained.
+
+::: {.callout-note title="A neuron is almost logistic regression"}
+Set $\phi$ to the **sigmoid** and a single neuron *is* logistic regression (L04): score, then
+squash to a probability. Set $\phi$ to a step and it is the perceptron (L05). The neuron is the
+generalization that contains both — and, once stacked, far more.
+:::
+
+The model traces back to McCulloch and Pitts (1943), who showed that a network of absurdly
+simple on/off units could compute any logical proposition, and to Rosenblatt (1958), who made
+such a unit *learn* from data. We borrow the biology for intuition only: like an aircraft that
+flies without flapping, artificial neurons long ago stopped resembling their biological cousins.
+
+## Activation Functions
+
+The activation $\phi$ is what makes a neuron more than a linear model. Four show up constantly:
+
+| Activation | Formula | Range | Use it for |
+|---|---|---|---|
+| **Step / sign** | $\phi(z) = 1$ if $z \ge 0$ else $0$ | $\{0, 1\}$ | the perceptron; **not** trainable by gradient descent |
+| **Sigmoid** | $\phi(z) = 1/(1 + e^{-z})$ | $(0, 1)$ | output layer for a probability (L04) |
+| **Tanh** | $\phi(z) = \tanh(z)$ | $(-1, 1)$ | zero-centered hidden activation (classic) |
+| **ReLU** | $\phi(z) = \max(0, z)$ | $[0, \infty)$ | **the modern default** for hidden layers |
+
+The step function has a fatal flaw for learning: its slope is **zero everywhere** (and
+undefined at 0), so gradient descent (L03) has nothing to follow — nudging a weight does not
+change the output until it suddenly flips. The smooth activations fix this: sigmoid and tanh
+have a usable slope, and **ReLU** — cheap to compute and with a constant slope of 1 for
+positive inputs — has become the default hidden activation in deep networks. We will lean on
+this in L16, where training *is* following those slopes.
+
+## Layers
+
+Stack several neurons side by side, each wired to **every** input, and you have a **dense**
+(fully connected) layer. A perceptron is the simplest case: an **input layer** feeding a single
+dense **output layer**. With linear algebra the whole layer is one expression,
+
+$$
+\mathbf{H} = \phi(\mathbf{X}\mathbf{W} + \mathbf{b}),
+$$
+
+where $\mathbf{X}$ is one row per instance, $\mathbf{W}$ holds one column of weights per neuron,
+$\mathbf{b}$ is the per-neuron bias (added to every row by broadcasting), and $\phi$ is applied
+element-wise. This single matrix form is exactly what a GPU runs billions of times per second.
+
+## The XOR Wall
+
+Here is the wall. A single neuron computes one linear score, so its decision boundary is one
+straight line (L04/L05) — it can only separate classes that a line can separate. **XOR** asks
+for output 1 on $(0,1)$ and $(1,0)$ but 0 on $(0,0)$ and $(1,1)$: the two positive corners sit
+on *opposite* sides of the square, and **no single straight line** puts them together. In the
+lab, a `Perceptron` fit to XOR scores **0.500** — pure chance — while the *same* model on the
+linearly separable iris-setosa problem scores a perfect **1.000**. The failure is XOR's
+geometry, not a bug in the code.
+
+## Breaking the Wall with Depth
+
+Add one **hidden layer** between input and output and the wall comes down. The trick is to have
+the hidden neurons compute *intermediate* features, and the output neuron combine **those**:
+
+- hidden neuron 1 = **OR** $(x_1, x_2)$
+- hidden neuron 2 = **NAND** $(x_1, x_2)$ (not-and)
+- output neuron = **AND** (hidden 1, hidden 2)
+
+Because `XOR = (x1 OR x2) AND NOT(x1 AND x2)`, this two-layer network reproduces XOR exactly —
+**1.000** in the lab, with weights we simply *wire by hand*. The output neuron never sees the
+raw inputs; it sees what the hidden layer *concluded*, and on those derived features the
+problem is linearly separable again.
+
+```{mermaid}
+flowchart LR
+  X1(("x1")) --> H1["hidden 1<br/>OR"]
+  X2(("x2")) --> H1
+  X1 --> H2["hidden 2<br/>NAND"]
+  X2 --> H2
+  H1 --> O["output<br/>AND -> XOR"]
+  H2 --> O
+```
+
+::: {.callout-important title="The nonlinearity is the active ingredient"}
+Depth alone is not enough — the activation must be **nonlinear**. A stack of purely *linear*
+layers collapses: $\mathbf{W}_2(\mathbf{W}_1\mathbf{x}) = (\mathbf{W}_2\mathbf{W}_1)\mathbf{x}$
+is just *one* linear map with a combined weight matrix, no more expressive than a single neuron.
+The lab shows this directly — replace the hidden step with the identity and the XOR network
+falls straight back to **0.500**. It is the nonlinear $\phi$, not the extra weights, that buys
+depth its power.
+:::
+
+## What's Next — the Open Question
+
+We *hand-wired* the XOR network's weights because we already knew the answer. Real networks have
+thousands to billions of weights and must **learn** them from data. That raises the two
+questions Unit V answers next:
+
+- **How do you specify and run such a network in practice?** — **L15 (Multilayer Perceptrons)**,
+  where we meet **PyTorch** and the universal-approximation idea.
+- **How do you train all those weights by gradient descent?** — **L16 (Backpropagation)**, the
+  algorithm that pushes the error backward through the layers.
+
+## Common Pitfalls
+
+- **"A single neuron is more powerful than logistic regression."** It is not — one neuron is
+  still a single linear boundary. The power comes from *stacking* into hidden layers.
+- **Wide but shallow.** Adding more neurons to *one* layer does not break the linear wall; you
+  need at least one **hidden** layer between input and output.
+- **Forgetting the nonlinearity.** Stacked *linear* layers collapse to a single linear layer —
+  the depth is wasted. A nonlinear activation between layers is mandatory.
+- **Training with a step activation.** The step has zero gradient, so gradient descent cannot
+  train it. Use a smooth activation (ReLU/sigmoid/tanh) in trainable networks.
+
+## FAQ / Industry Reality
+
+**"Is a neuron just logistic regression?"** — A *single* sigmoid neuron is exactly logistic
+regression. The difference is what you do next: stack neurons into hidden layers and the network
+learns its own intermediate features, which a lone logistic-regression model cannot.
+
+**"Why ReLU instead of sigmoid these days?"** — In deep networks, sigmoid and tanh *saturate*:
+far from 0 their slope is almost zero, so gradients shrink toward nothing as they pass back
+through many layers (the vanishing-gradient problem, L17). ReLU keeps a constant slope of 1 for
+positive inputs, trains faster, and is cheap to compute — so it is the default hidden activation.
+
+**"How many layers and neurons do I need?"** — More neurons mean more capacity and more risk of
+overfitting (L09). There is no formula; you tune it like any other hyperparameter. L15 (capacity)
+and L17 (regularization for deep nets) take this up — for now, one hidden layer is enough to beat
+XOR.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---|---|
+| Artificial neuron | a weighted sum $z = \mathbf{w}^\top\mathbf{x}+b$, then an activation $a=\phi(z)$ |
+| Perceptron vs neuron | the perceptron is a neuron with $\phi$ fixed to a hard step |
+| Activation function | the nonlinearity $\phi$; step / sigmoid / tanh / **ReLU** (modern default) |
+| Why smooth $\phi$ | the step has zero gradient — useless for gradient descent (L03) |
+| Dense layer | every input wired to every neuron: $\phi(\mathbf{X}\mathbf{W}+\mathbf{b})$ |
+| XOR wall | not linearly separable, so one neuron fails (0.500) |
+| Hidden layer | acts on what the previous layer computed, so it solves XOR (1.000) |
+| Nonlinearity is key | stacked *linear* layers collapse to one linear map |
+| MLP (next) | input to hidden layer(s) to output; the weights are *learned* (L15/L16) |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 10 — "Introduction to Artificial
+  Neural Networks": the biological neuron, the perceptron, the MLP, and the XOR example this
+  lesson follows.
+- **History:** Minsky & Papert, *Perceptrons* (1969) — the monograph that named the XOR
+  limitation and triggered the first "AI winter."
+- **Docs:** [PyTorch — "What is `torch.nn` really?"](https://pytorch.org/tutorials/beginner/nn_tutorial.html)
+  — builds a network from raw tensors up to `nn.Module`; the on-ramp to L15.

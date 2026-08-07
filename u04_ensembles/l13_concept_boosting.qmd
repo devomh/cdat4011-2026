@@ -1,0 +1,199 @@
+---
+title: "Boosting"
+unit: "IV"
+lesson: "13"
+type: concept
+tags: [boosting, adaboost, gradient-boosting, xgboost, learning-rate, ensembles]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Explain** boosting as a sequential ensemble that corrects its predecessor, and
+  contrast it with bagging (bias vs variance). *(Understand)*
+- **Explain** AdaBoost (reweight the misclassified) and **use** it to turn stumps into
+  a strong classifier. *(Understand / Apply)*
+- **Explain** gradient boosting (fit the residuals) and **use** `learning_rate` and
+  `n_estimators` as the regularization dials. *(Understand / Apply)*
+- **Diagnose** boosting overfitting and **apply** early stopping; compare a random
+  forest to gradient boosting on the same data. *(Analyze / Apply — in the lab)*
+
+> **Where this sits:** after `L12 — Decision Trees & Bagging`, this lesson **closes Unit
+> IV** by meeting bagging's mirror image: where bagging averages independent trees to cut
+> *variance*, boosting chains corrective trees to cut *bias*. · next: `L14 — From
+> Perceptrons to Neural Networks` (Unit V opens). Note: **Exam I** covers Units I-IV.
+>
+> **Hands-on:** [Lab — Chaining Weak Stumps](l13_lab_boosting.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u04_ensembles/l13_lab_boosting.ipynb)
+
+## Why This Matters
+
+A single decision *stump* — one yes/no question — is almost useless: in the lab it
+scores 0.644, a hair above a coin flip. Boosting makes an audacious claim: chain
+hundreds of these near-useless stumps, each one focused on the mistakes of the last, and
+you get a classifier that rivals the random forest. The trick is not better individual
+trees; it is **sequence**. Where bagging (L12) convenes a panel of independent experts
+and averages them, boosting runs a **relay** — each runner picks up exactly where the
+previous one stumbled — and that attacks the *other* half of the bias-variance budget.
+
+Boosting in its gradient form is, in 2026, the algorithm that wins most tabular-data
+competitions and quietly powers countless production models. It is worth understanding
+well.
+
+::: {.callout-tip title="Analogy"}
+Bagging is a **panel of doctors** who each examine the patient independently; you average
+their opinions and the random errors wash out. Boosting is an **apprenticeship**: the
+first doctor makes a rough diagnosis, the second studies only the cases the first got
+wrong, the third studies what the first two still miss, and so on. Each is mediocre
+alone, but the chain — weighted by how reliable each turned out to be — becomes an expert.
+:::
+
+## Boosting vs Bagging
+
+The two ensemble families of Unit IV are mirror images, and the contrast is the whole
+lesson in one table:
+
+| | **Bagging** (L12) | **Boosting** (L13) |
+|--|-------------------|--------------------|
+| How trees are built | **in parallel**, independently | **in sequence**, each fixes the last |
+| Each tree trains on | a bootstrap resample | the *errors* of the running ensemble |
+| Primarily reduces | **variance** | **bias** |
+| Base learner | usually deep (low-bias) trees | usually shallow **weak learners** (stumps) |
+| Parallelizable? | yes (trees are independent) | no (each needs its predecessor) |
+| Risk | hard to overfit | **overfits** if over-run |
+
+Bagging takes high-variance trees and averages the variance away. Boosting takes
+high-*bias* weak learners and, by relentlessly focusing on what they get wrong, drives
+the bias down. Two different problems, two opposite cures.
+
+## AdaBoost: Reweight the Mistakes
+
+**AdaBoost** (adaptive boosting) builds the relay by reweighting the *data*. Every
+training instance starts with equal weight. Then, round by round:
+
+1. Train a weak learner (a stump) on the weighted data.
+2. Measure its weighted error rate.
+3. Give the learner a vote weight that grows with its accuracy.
+4. **Raise the weight of every instance it misclassified** — so the next learner pays
+   more attention to the hard cases — and renormalize.
+
+The final prediction is a **weighted vote** of all the weak learners, each weighted by
+how reliable it turned out to be. A learner that is barely better than chance gets a
+near-zero vote; an accurate one gets a loud vote. In the lab, AdaBoost over plain stumps
+climbs from a single stump's 0.644 to about 0.783 as the stumps accumulate.
+
+> **A version note:** scikit-learn's multiclass AdaBoost implementation uses **SAMME**.
+> The probability-based `SAMME.R` option was deprecated in 1.4 and removed in 1.6; the
+> `algorithm` parameter itself was deprecated in 1.6 and removed in 1.8. The lab therefore
+> uses the current API without an `algorithm` argument.
+
+## Gradient Boosting: Fit the Residuals
+
+**Gradient boosting** takes a different, more general route to the same sequential idea.
+Instead of reweighting instances, each new tree is trained to predict the **residuals** —
+the errors (L03) — left by the current ensemble. You then *add* that tree's predictions
+to the running total, shrinking the leftover error a little more each round. The ensemble
+is an **additive** (stagewise) model: $F(x) = \sum_m \nu\, h_m(x)$, each $h_m$ a small
+tree fit to what is still wrong.
+
+The factor $\nu$ is the **learning rate**, and it is exactly the **shrinkage
+regularization** of L10 in a new costume: it scales down each tree's contribution so the
+ensemble inches toward the answer rather than leaping. A *small* learning rate
+generalizes better but needs *more* trees; a *large* one fits fast and **overfits** — in
+the lab a rate of 0.01 lands at test 0.822 while a rate of 1.0 drives *training* accuracy
+to a perfect, over-fit 1.000. Learning rate and number of trees are tuned together.
+
+```{mermaid}
+flowchart TD
+  D["Training set"] --> M1["Weak learner 1<br/>(a shallow tree)"]
+  M1 --> E1["What it still gets wrong<br/>(reweight, or take residuals)"]
+  E1 --> M2["Weak learner 2<br/>trained on those errors"]
+  M2 --> E2["What the pair still gets wrong"]
+  E2 --> Md["...Weak learner M"]
+  Md --> S["Weighted sum of all learners"]
+  S --> P["Prediction"]
+```
+
+## Tuning and Early Stopping
+
+Because more rounds keep reducing *training* error, boosting will happily overfit if you
+let it run too long. Two guards:
+
+- **Early stopping** — hold out a small validation slice and stop adding trees when it
+  stops improving (`n_iter_no_change`). In the lab this halts at 92 trees and matches the
+  best hand-tuned test score (0.822) with no manual search.
+- **Shrinkage + shallow trees** — a small `learning_rate` and a shallow `max_depth` (2-3)
+  keep each step modest, trading more rounds for better generalization.
+
+In practice you rarely write the loop yourself: **XGBoost** and **LightGBM** are the
+industrial gradient-boosting libraries — faster, regularized, and competition-dominating —
+but they are the same idea as scikit-learn's `GradientBoostingClassifier`, which the lab
+uses.
+
+## Common Pitfalls
+
+- **Over-boosting.** More trees is not always better — past the sweet spot, test error
+  climbs even as training error keeps falling. Use early stopping or CV to pick the count.
+- **AdaBoost on noisy labels.** Because it keeps upweighting whatever it gets wrong,
+  AdaBoost will obsess over mislabeled or outlier points and chase the noise. Gradient
+  boosting with a small learning rate is gentler.
+- **Cranking the learning rate to train faster.** A large rate reaches high training
+  accuracy quickly and overfits; the reliable recipe is a *small* rate with *more* trees.
+- **Expecting parallel speed.** Boosting is sequential by construction — each tree needs
+  the one before it — so it does not parallelize across trees the way a random forest does.
+
+::: {.callout-note title="Deep Dive: AdaBoost's weights (Optional)" collapse="true"}
+
+For a weak learner with weighted error rate $r$, AdaBoost sets its vote weight to
+$\alpha = \eta \,\log\!\frac{1-r}{r}$ (with learning rate $\eta$). A learner at chance
+($r = 0.5$) gets $\alpha = 0$; a better-than-chance learner gets $\alpha > 0$ that grows
+as $r$ shrinks; a *worse*-than-chance learner gets $\alpha < 0$ (its vote is flipped).
+Each misclassified instance then has its weight multiplied by $e^{\alpha}$ before
+renormalizing, so the next learner sees the hard cases loom larger. It can be shown this
+is stagewise minimization of an exponential loss — which is the bridge to gradient
+boosting, where the "errors" become the gradient of whatever loss you choose.
+:::
+
+## FAQ / Industry Reality
+
+**"AdaBoost or gradient boosting?"** — Gradient boosting is the modern default: more
+flexible (any differentiable loss), better behaved on noisy data, and the basis of
+XGBoost/LightGBM. AdaBoost is the historically important, easy-to-explain ancestor and
+still fine on clean data, but new projects usually reach for gradient boosting.
+
+**"Boosting or a random forest?"** — Try the random forest first: it is strong out of the
+box, hard to overfit, and needs almost no tuning. Tuned gradient boosting often wins the
+last few points — in the lab they finish neck-and-neck (forest 0.817, gradient boosting
+0.811) — but boosting demands care with the learning rate, tree depth, and number of
+rounds. The forest is the safe baseline; boosting is the performance ceiling.
+
+**"What is XGBoost?"** — A highly optimized, regularized gradient-boosting library (with
+LightGBM and CatBoost as cousins). Same core idea as this lesson — additive trees fit to
+residuals — with engineering for speed, built-in regularization, and missing-value
+handling. It is the workhorse behind a large share of winning tabular-data models.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| Boosting | a sequential ensemble; each learner corrects its predecessor (cuts bias) |
+| vs Bagging | bagging is parallel and cuts variance; boosting is sequential and cuts bias |
+| Weak learner | a model barely better than chance (a stump); boosting's raw material |
+| AdaBoost | reweight the misclassified each round; combine by a weighted vote |
+| SAMME | scikit-learn's current discrete AdaBoost algorithm; the old algorithm selector is gone |
+| Gradient boosting | fit each new tree to the residual errors; add them (additive model) |
+| learning_rate | shrinkage regularization; small rate + more trees generalizes best |
+| Early stopping | `n_iter_no_change` halts when validation stops improving |
+| XGBoost / LightGBM | the industrial gradient-boosting libraries (named) |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 7 — the boosting half (AdaBoost,
+  gradient boosting, early stopping) that this lesson follows.
+- **Docs:** [scikit-learn's ensemble guide](https://scikit-learn.org/stable/modules/ensemble.html#adaboost)
+  — AdaBoost and gradient boosting with runnable examples and the tuning parameters.
+- **Text, deeper:** James et al., *An Introduction to Statistical Learning*, ch. 8 — boosting
+  alongside bagging and random forests, with the bias-variance reasoning behind each.

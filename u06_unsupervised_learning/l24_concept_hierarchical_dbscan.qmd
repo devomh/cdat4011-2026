@@ -1,0 +1,206 @@
+---
+title: "Hierarchical & Density-Based Clustering"
+unit: "VI"
+lesson: "24"
+type: concept
+tags: [unsupervised-learning, dbscan, hierarchical-clustering, dendrogram, linkage, scikit-learn]
+difficulty: intermediate
+duration: "75 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Explain** DBSCAN: an `eps`-neighborhood and `min_samples` define **core / border / noise**
+  points, a cluster is a chain of density-connected core points, there is no `k` to choose, and
+  outliers are flagged as noise. *(Understand)*
+- **Apply** DBSCAN with scikit-learn and **show** it solves L23's crescents -- ARI from K-Means'
+  0.239 up to 1.000 on the same moons. *(Apply / Analyze -- in the lab)*
+- **Explain** agglomerative hierarchical clustering: bottom-up merging by a **linkage** rule into a
+  **dendrogram** you **cut** to choose the number of clusters. *(Understand)*
+- **Compare** K-Means, DBSCAN, and hierarchical clustering, and choose by the **shape** of the
+  clusters. *(Analyze)*
+- **Diagnose** the parameter traps: DBSCAN's `eps` (too small -> all noise, too large -> one blob)
+  and the **linkage** choice (single chains along curves; ward makes compact blobs and cuts them).
+  *(Analyze)*
+
+> **Where this sits:** after `L23 — K-Means Clustering & Similarity`, this lesson **closes the Unit
+> VI clustering pair** by answering the cliffhanger L23 ended on -- the two crescents K-Means cut in
+> half. · next: `L25 — Gaussian Mixtures & EM` (soft, probabilistic clustering). Still
+> **scikit-learn** (plus SciPy for the dendrogram).
+>
+> **Hands-on:** [Lab — Clustering Shapes K-Means Cannot](l24_lab_hierarchical_dbscan.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u06_unsupervised_learning/l24_lab_hierarchical_dbscan.ipynb)
+
+## Why This Matters
+
+L23 ended on a freeze-frame: two interleaved crescents, and K-Means slicing each one in half
+because the best a centroid can do is a straight cut through the middle (ARI 0.239). The two arcs
+were obvious to your eye but invisible to an algorithm whose only idea of "cluster" is *distance to
+a center*. The fix is not a cleverer K-Means -- it is a different **definition of a cluster**.
+
+This lesson gives you two. **DBSCAN** defines a cluster as a **dense, connected region**, so it
+walks around each crescent's curve and -- as a bonus -- labels the stray points as noise.
+**Hierarchical** clustering refuses to commit to `k` at all: it merges the two closest groups over
+and over and draws the entire **tree** of merges, which you cut wherever you like. On the exact
+moons that beat K-Means, both score a perfect ARI of 1.000.
+
+::: {.callout-tip title="Analogy"}
+K-Means is a **mailman** who assigns every house to its nearest post office -- tidy when towns are
+round blobs, hopeless when a town is shaped like a banana. DBSCAN is a **rumor**: it spreads from
+any crowded house to its near neighbors and on through the crowd, so it traces whatever shape the
+crowd actually forms and never reaches the isolated houses out in the fields (the noise).
+Hierarchical clustering is a **family tree** of merges: it records who joined whom and at what
+distance, and you read off "families" by cutting the tree at whatever height you choose.
+:::
+
+## Density-Based Clustering: DBSCAN
+
+**DBSCAN** (Density-Based Spatial Clustering of Applications with Noise) needs no `k`. It takes two
+parameters -- `eps` (the neighborhood radius) and `min_samples` (how many points make a neighborhood
+"dense") -- and sorts every point into one of three roles:
+
+- **Core point:** has at least `min_samples` points within distance `eps` (it sits in a dense
+  region).
+- **Border point:** within `eps` of a core point, but not itself dense.
+- **Noise point:** neither -- an outlier, given the label **-1**.
+
+A cluster is then a **maximal chain of density-connected core points**, plus the border points
+hanging off them. Because clusters grow by *connection* rather than by distance to a center, they
+can take **any shape** -- a crescent, a ring, a spiral. And because lonely points never join a
+chain, DBSCAN does **anomaly detection for free**: anything labelled -1 is an outlier. In the lab,
+DBSCAN recovers the two moons at **ARI 1.000** (versus K-Means' 0.239) and, when 15 stray points are
+injected, quarantines 11 of them as noise while keeping the crescents intact.
+
+```{mermaid}
+flowchart TD
+  P["A point p"] --> Q{"At least min_samples points<br/>within eps of p?"}
+  Q -- "yes" --> C["CORE point<br/>(seeds/extends a cluster)"]
+  Q -- "no" --> R{"Within eps of<br/>some core point?"}
+  R -- "yes" --> B["BORDER point<br/>(joins that cluster)"]
+  R -- "no" --> N["NOISE point<br/>(label -1, an outlier)"]
+```
+
+The price is **`eps`**: it is DBSCAN's one critical dial, and a global radius only makes sense on
+**scaled** features (the L08/L10 step). Too **small** and no neighborhood is dense enough -- the data
+shatters into fragments and most points become noise (in the lab, `eps=0.05` gives 7 junk clusters
+and 77 noise points). Too **large** and the whole dataset is one neighborhood -- a single cluster.
+DBSCAN also has no `predict` method (it is **transductive** -- it clusters the data it is given and
+cannot place a brand-new point), and a single global `eps` struggles when clusters have very
+different densities -- the successor **HDBSCAN** handles that case.
+
+## Hierarchical (Agglomerative) Clustering
+
+**Agglomerative** clustering builds clusters bottom-up. Start with every point as its own cluster,
+then repeatedly **merge the two closest clusters**, recording each merge, until a single cluster
+remains. The full record is a **dendrogram** -- a tree whose **height** at each join is the distance
+between the two clusters it merged. You then **cut** the tree at a chosen height (or for a chosen
+number of branches) to read off your clusters; the tall final merges are the natural cut points,
+because they join groups that are genuinely far apart.
+
+The hidden choice is what "closest" means -- the **linkage** rule:
+
+| Linkage | Distance between two clusters | Tends to make |
+|---------|------------------------------|---------------|
+| **Single** | the **nearest** pair of points | long, chained clusters -- follows curves |
+| **Complete** | the **farthest** pair of points | compact, equal-diameter clusters |
+| **Average** | the average over all cross-pairs | a middle ground |
+| **Ward** | the merge that least increases within-cluster variance | compact, round blobs (K-Means-like) |
+
+Linkage is not a detail -- it changes the answer. On the lab's moons, **single** linkage chains
+along each crescent (ARI 1.000) while **ward** linkage insists on compact blobs and cuts them in
+half (ARI 0.150 -- essentially K-Means' 0.239 in disguise). A dendrogram costs $O(n^2)$ memory, so
+hierarchical clustering is for modest `n`, but it gives you the whole merge structure without
+committing to `k` up front.
+
+## Choosing the Algorithm
+
+Three clustering families, three different notions of "cluster":
+
+| | **K-Means** (L23) | **DBSCAN** | **Hierarchical** |
+|--|------------------|-----------|------------------|
+| A cluster is | points near a **centroid** | a **dense, connected** region | a branch of a **merge tree** |
+| Shape it finds | round, similar-size blobs | **any** shape | depends on **linkage** |
+| Need to pick `k`? | yes | **no** (picks it from density) | no -- cut the tree afterward |
+| Outliers | forced into a cluster | **flagged as noise (-1)** | forced into a cluster |
+| Main dial | `k` | **`eps`**, `min_samples` | **linkage** |
+| Scales to large `n`? | yes (fast) | yes | no ($O(n^2)$) |
+| Weak spot | non-round shapes | varying density; one global `eps` | cost; linkage choice |
+
+```{mermaid}
+flowchart TD
+  S{"What are your<br/>clusters like?"}
+  S -- "round, similar-size blobs;<br/>you can guess k" --> K["K-Means (L23)"]
+  S -- "arbitrary shapes,<br/>and you want outliers flagged" --> D["DBSCAN<br/>(tune eps on scaled data)"]
+  S -- "you want the whole merge tree,<br/>or a specific linkage" --> H["Agglomerative<br/>(cut the dendrogram)"]
+```
+
+The rule of Unit VI in one line: **match the algorithm to the shape of your data.** Round blobs ->
+centroids; arbitrary connected shapes -> density or single-linkage; a full tree -> hierarchical.
+
+## Common Pitfalls
+
+- **DBSCAN `eps` mis-set.** Too small shatters the data into noise; too large fuses everything into
+  one cluster. Set it on **scaled** features, and use a k-distance plot or a small sweep to find it.
+- **Forgetting to scale before DBSCAN.** A single global radius is meaningless when features have
+  different numeric ranges -- the same scaling lesson as K-Means.
+- **Using ward or complete linkage on connected shapes.** They build compact blobs and cut crescents
+  and rings; for connected structure use **single** linkage (or DBSCAN).
+- **Reading a dendrogram's left-to-right leaf order as meaningful.** Only the **merge heights**
+  carry information; the horizontal order is just a drawing convenience.
+- **Expecting DBSCAN to `predict` new points.** It has no `predict` (it is transductive); re-fit, or
+  use a different model if you need to classify incoming points.
+
+::: {.callout-note title="Deep Dive: why single linkage wraps a crescent (Optional)" collapse="true"}
+
+Single linkage defines the distance between two clusters as the distance between their *nearest*
+pair of points. Merging always picks the globally closest such pair, so the algorithm greedily
+connects each point to its nearest neighbor first, building long "chains" that thread along any
+densely sampled curve -- a crescent, a ring, a spiral. That is exactly DBSCAN's density-connection
+idea in a different guise, which is why the two agree on the moons (both ARI 1.000). The flip side
+is the **chaining problem**: a single thin bridge of points between two otherwise-separate blobs
+will fuse them, because the nearest cross-pair is tiny. Ward and complete linkage resist that by
+penalizing spread, which is also why they cut crescents -- the same property that makes them robust
+on blobs makes them wrong on curves. There is no universally best linkage; it depends on the shape
+you expect.
+:::
+
+## FAQ / Industry Reality
+
+**"K-Means, DBSCAN, or hierarchical?"** -- Start with the **shape**. Round, well-separated blobs and
+you roughly know `k`: K-Means (fast, scales). Arbitrary shapes, unknown cluster count, or you need
+outliers flagged: DBSCAN. You want the full merge structure or a specific linkage, and `n` is
+modest: hierarchical. There is no universally best clusterer -- scikit-learn's clustering-comparison
+gallery exists precisely to show each one's failure cases.
+
+**"How do I choose `eps`?"** -- Scale first, then look at a **k-distance plot** (sort every point's
+distance to its `min_samples`-th neighbor; the "knee" is a good `eps`), or sweep a few values and
+check cluster/noise counts as the lab does. `min_samples` is usually a small number near the data
+dimensionality.
+
+**"What is HDBSCAN?"** -- A hierarchical extension of DBSCAN that varies the density threshold, so it
+handles clusters of **different densities** -- DBSCAN's main weak spot -- without a single global
+`eps`. Same density idea, more robust; it is the common modern default for density clustering.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---------|---------------|
+| DBSCAN | cluster = a dense, connected region; no `k`; outliers become noise (label -1) |
+| core / border / noise | dense / next-to-dense / neither (-1); set by `eps` + `min_samples` |
+| `eps` | DBSCAN's critical dial -- too small all noise, too large one blob; set on scaled data |
+| Agglomerative | merge the two closest clusters bottom-up into a dendrogram |
+| Dendrogram | the merge tree; **cut** it at a height to choose `k`; only heights are meaningful |
+| Linkage | single = nearest pair (chains/curves), ward = least variance (compact blobs) |
+| single vs ward | single wraps crescents/rings (ARI 1.000); ward cuts them (0.150, K-Means-like) |
+| Choosing | match the algorithm to the **shape**: blobs -> K-Means, curves -> DBSCAN/single, tree -> hierarchical |
+
+## Where to Go Deeper
+
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 9 -- the DBSCAN and agglomerative-clustering
+  sections (core/border/noise, linkage, dendrograms) this lesson follows.
+- **Docs:** [scikit-learn's clustering comparison](https://scikit-learn.org/stable/auto_examples/cluster/plot_cluster_comparison.html)
+  -- the gallery that puts K-Means, DBSCAN, Ward, and others on the same hard shapes side by side.
+- **Paper:** Ester, Kriegel, Sander & Xu (1996), *A Density-Based Algorithm for Discovering Clusters*
+  -- the original DBSCAN paper.

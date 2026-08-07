@@ -1,0 +1,178 @@
+---
+title: "Backpropagation & Autodiff"
+unit: "V"
+lesson: "16"
+type: concept
+tags: [neural-networks, backpropagation, autodiff, chain-rule, computational-graph, pytorch, autograd]
+difficulty: intermediate
+duration: "90 mins"
+---
+
+## Learning Objectives
+
+By the end of this lesson you will be able to:
+
+- **Explain** backpropagation as reverse-mode automatic differentiation applied to the loss -- one
+  forward pass, one backward pass -- and why that mode fits a neural network. *(Understand)*
+- **Apply** the chain rule across a small **computational graph**, where each node pushes its
+  gradient to its inputs via the local derivative. *(Apply — in the lab)*
+- **Build** a scalar autograd engine and **verify** its gradients against PyTorch and a numerical
+  check. *(Apply / Analyze — in the lab)*
+- **Explain** why gradients accumulate (hence `zero_grad`) and why one backward pass computes all
+  parameter gradients in one sweep at a cost comparable to the forward pass, while both costs scale
+  with the computation graph. *(Understand / Analyze)*
+
+> **Where this sits:** after `L15 — Multilayer Perceptrons`, where `loss.backward()` was a black box
+> we trusted. This lesson **builds that black box** from scratch and shows it is just the chain rule
+> run backward over a graph. · next: `L17 — Training Deep Networks`, which uses these gradients to
+> train deep nets *well* (initialization, optimizers, regularization).
+>
+> **Hands-on:** [Lab — Building an Autograd Engine from Scratch](l16_lab_backprop_autodiff.md) ·
+> [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/{{< var repo.org >}}/{{< var repo.name >}}/blob/{{< var repo.branch >}}/u05_deep_learning/l16_lab_backprop_autodiff.ipynb)
+
+## Why This Matters
+
+In L15 a single line did the magic: `loss.backward()` reached into a network of thousands of weights
+and told each one which way to move. We took it on faith. This lesson removes the faith.
+**Backpropagation is not a special neural-network trick -- it is the chain rule, applied
+bookkeeping-style over a graph of operations, run once backward from the loss.** The fact that makes
+deep learning possible: one reverse sweep computes the gradients for every parameter at a cost
+comparable to the forward pass. Larger graphs still require more work; the saving is that backprop
+does not run a separate forward pass for every weight. In the lab we build the whole engine in
+about eighty lines (a faithful reproduction of Karpathy's *micrograd*) and watch it agree with PyTorch
+to the last digit.
+
+## Four Ways to a Derivative
+
+| Method | How | Verdict |
+|---|---|---|
+| **By hand / symbolic** | differentiate the formula on paper | exact, but hopeless for millions of parameters |
+| **Numerical** | `(f(x+h) - f(x-h)) / 2h` | easy, but one forward pass *per parameter* and imprecise -- a *check*, not a trainer |
+| **Forward-mode autodiff** | propagate derivatives forward with the values | efficient for **few inputs, many outputs** |
+| **Reverse-mode autodiff** | one forward pass, then one backward pass applying the chain rule | efficient for **many inputs, one output** -- the neural-net case |
+
+A network has millions of inputs (the weights) and **one** output (the scalar loss). That is exactly
+where **reverse-mode** wins, and it is what backprop uses.
+
+## The Chain Rule and the Computational Graph
+
+Everything rests on the **chain rule**: if `L` depends on `v`, and `v` depends on `u`, then
+
+$$\frac{\partial L}{\partial u} = \frac{\partial L}{\partial v}\cdot\frac{\partial v}{\partial u}.$$
+
+Write any expression as a **computational graph** -- a DAG whose nodes are the intermediate values
+and whose edges are operations. Reverse-mode keeps, for each node, the quantity $\partial L/\partial
+v$ (its **grad**), and pushes it to the node's inputs by multiplying by the **local derivative**
+$\partial v/\partial u$ -- a quantity each operation knows about itself (for `a*b`, the local
+derivatives are simply `b` and `a`).
+
+```{mermaid}
+flowchart LR
+  a["a = 2"] --> e["e = a*b = -6"]
+  b["b = -3"] --> e
+  e --> d["d = e + c = 4"]
+  c["c = 10"] --> d
+  d --> L["L = d*f = -8"]
+  f["f = -2"] --> L
+```
+
+That is the graph for `L = (a*b + c)*f`. The forward pass fills in the values left to right; the
+backward pass seeds $\partial L/\partial L = 1$ at the right and flows gradients back to the left,
+landing on $\partial L/\partial a = 6$, $\partial L/\partial b = -4$, and so on -- which the lab
+confirms by hand, against PyTorch, and numerically.
+
+## Reverse-Mode in Three Moves
+
+1. **Forward pass.** Compute every node's value and remember the graph (who produced whom, and each
+   node's local-derivative rule).
+2. **Topological order.** Sort nodes so each comes after everything it depends on. A node's gradient
+   is only correct once *all* the nodes it feeds have pushed their share -- reverse topological order
+   guarantees that.
+3. **Backward sweep.** Seed $\partial L/\partial L = 1$, then walk the graph in reverse, each node
+   adding its contribution into its inputs' grads via the local derivative.
+
+::: {.callout-important title="Gradients accumulate"}
+Every gradient push uses `+=`, not `=`. If a node feeds into several places, its gradient is the
+**sum** of the contributions from each path (the multivariable chain rule). That is also why a
+training loop must call `zero_grad()` every step: otherwise this step's gradients pile on top of last
+step's. The `optimizer.zero_grad()` from L15 is exactly this reset.
+:::
+
+## Backprop = Reverse-Mode Autodiff on the Loss
+
+Put it together: **backpropagation is reverse-mode autodiff with the loss as the output.** One
+forward pass to compute the loss, one backward pass to get the gradient of that loss with respect to
+every parameter. The backward pass is typically a constant-factor multiple of the forward pass: both
+costs grow with the operations and parameters in the graph, but reverse-mode obtains all parameter
+gradients in one sweep instead of re-running the model once per parameter. That distinction is why
+training networks with millions (or billions) of weights is feasible.
+
+## PyTorch `autograd` Is the Same Engine
+
+PyTorch's `autograd` is precisely the engine you build in the lab, with two differences: its nodes
+are **tensors** (one operation differentiates a whole matrix at once), and it is written in C++/CUDA
+for speed. Everything else is identical -- a dynamic graph, a `.backward()` that walks it in reverse,
+and gradients that **accumulate** in `.grad`:
+
+```python
+x = torch.tensor([2.0, 0.0])
+w = torch.tensor([-3.0, 1.0], requires_grad=True)
+b = torch.tensor(6.8813735870195432, requires_grad=True)
+o = torch.tanh((x * w).sum() + b)
+o.backward()        # fills w.grad and b.grad -- same numbers as our scalar engine
+```
+
+Mark a tensor with `requires_grad=True`, build an expression, call `.backward()` on the final scalar,
+and read each input's `.grad`. (You can also get gradients without populating `.grad` via
+`torch.autograd.grad`.) When you wrote `loss.backward()` in L15, *this* is what ran.
+
+## Common Pitfalls
+
+- **Forgetting gradients accumulate.** Without `zero_grad()` each step, gradients from previous steps
+  pile up and training goes haywire. The `+=` in the engine is the reason.
+- **Confusing numerical with autodiff.** Finite differences are a great *check*, but they need a
+  forward pass per parameter and lose precision -- useless for training. Backprop is exact and cheap.
+- **Thinking backprop is neural-network-specific.** It is general reverse-mode autodiff; it
+  differentiates any computational graph, not just nets.
+- **Mixing up the modes.** Reverse-mode is for many-inputs/one-output (nets); forward-mode is the
+  opposite. Using the wrong one is asymptotically slow.
+
+## FAQ / Industry Reality
+
+**"Is backprop just the chain rule?"** -- Essentially yes, plus the bookkeeping that makes it
+efficient: storing each intermediate value, knowing each operation's local derivative, and sweeping
+the graph once in reverse topological order so no gradient is computed twice. The insight is not the
+calculus; it is the *one backward pass* organization.
+
+**"Why not just use numerical gradients?"** -- They are simple and great for *checking* a gradient,
+but training needs the gradient with respect to every parameter, and finite differences cost a
+forward pass *each* -- millions of forward passes per step -- and lose precision. Backprop delivers
+all of them exactly in a single backward pass.
+
+**"Do I ever write `.backward()` myself?"** -- Almost never; you call PyTorch's. But understanding it
+demystifies the bugs you *will* hit: a gradient that is `None` (you forgot `requires_grad`, or
+detached the graph), gradients that explode because you forgot `zero_grad`, or "backward through the
+graph a second time" errors. The black box becomes debuggable.
+
+## Summary / Cheat-sheet
+
+| Concept | The one-liner |
+|---|---|
+| Backpropagation | reverse-mode autodiff applied to the loss: one forward pass, one backward pass |
+| Chain rule | `dL/du = (dL/dv)(dv/du)` -- compose local derivatives along the graph |
+| Computational graph | the DAG of operations; each node remembers how it was made |
+| Local derivative | each operation's own derivative (for `a*b`: `b` and `a`) |
+| Reverse topological order | process nodes so each grad is complete before it pushes |
+| Gradients accumulate | `+=` where a node fans out -- hence `zero_grad()` each step |
+| Cost | one backward sweep gets all parameter gradients; its work is comparable to a forward pass and scales with the graph |
+| PyTorch autograd | the same engine, vectorized over tensors -- `requires_grad`, `.backward()`, `.grad` |
+
+## Where to Go Deeper
+
+- **Build it:** Andrej Karpathy, [micrograd](https://github.com/karpathy/micrograd) (MIT) and his
+  "The spelled-out intro to neural networks and backpropagation" walkthrough -- the ~150-line engine
+  this lesson reproduces.
+- **Docs:** [PyTorch -- Autograd mechanics](https://pytorch.org/docs/stable/notes/autograd.html) --
+  how the dynamic graph, `requires_grad`, and accumulation actually work.
+- **Course text:** Géron, *Hands-On Machine Learning*, ch. 10 -- the backpropagation section, with
+  the reverse-mode autodiff explanation behind it.
