@@ -1,0 +1,120 @@
+<!-- Click-to-zoom for diagrams and figures. Offline, no dependencies, no CDN.
+     Clicking any Mermaid SVG, plot output, or embedded figure opens it enlarged in a
+     full-screen overlay (click anywhere or press Esc to close).
+
+     Event delegation on `document` is REQUIRED, not a style choice: Quarto emits Mermaid
+     as a pre.mermaid-js placeholder and mermaid.js injects the svg into the surrounding
+     figure after page load, so per-element listeners bound at load time would miss every
+     diagram. (Selectors are written class-wise here on purpose -- spelling the literal
+     placeholder tag in this comment makes every grep for real diagrams match this file.)
+
+     Wired in _quarto.yml via `include-after-body`. Shared by all courses -- edit the
+     copy in _design/ semantics (see _design/quarto_style_default.md, decision 0023)
+     and re-copy, rather than diverging per course. -->
+<style>
+  figure svg,
+  figure img,
+  div.cell-output-display svg,
+  div.cell-output-display img,
+  .quarto-figure img {
+    cursor: zoom-in;
+  }
+  /* Linked images (the Colab badge) must navigate, not zoom. */
+  a figure img,
+  a img {
+    cursor: pointer;
+  }
+  .dgm-zoom-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;        /* a tall diagram held at on-page size may exceed the viewport */
+    cursor: zoom-out;
+  }
+  .dgm-zoom-overlay > * {
+    background: #fff;
+    border-radius: 6px;
+    padding: 1rem;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+    cursor: zoom-out;
+  }
+</style>
+<script>
+  (function () {
+    var SEL = [
+      "figure svg",
+      "figure img",
+      "div.cell-output-display svg",
+      "div.cell-output-display img",
+      ".quarto-figure img"
+    ].join(", ");
+
+    // Viewport budget for the enlarged copy, leaving room for the card's padding.
+    var MAX_W = 0.92, MAX_H = 0.88;
+
+    // Size the clone to fill the viewport budget while preserving its aspect ratio.
+    // Explicit sizing is REQUIRED for <svg>: it carries no intrinsic size, so
+    // max-width/max-height alone leaves it collapsed or under-scaled. Raster images are
+    // sized the same way (rather than by max-* alone) so a click always enlarges --
+    // capping at natural size would make a 770px figure grow by a useless ~1.1x.
+    function fit(node, w, h, onPageW) {
+      var availW = window.innerWidth * MAX_W, availH = window.innerHeight * MAX_H;
+      node.removeAttribute("width");
+      node.removeAttribute("height");
+      if (!(w > 0 && h > 0)) {            // no usable intrinsic size: fall back to filling
+        node.style.width = availW + "px";
+        node.style.height = availH + "px";
+        return;
+      }
+      // Fit inside the viewport budget, but NEVER below the size the figure already has
+      // on the page: a tall diagram (e.g. a 454x840 flowchart in a 900px-high window)
+      // otherwise "zooms" to 0.94x and comes out smaller than what was clicked. When the
+      // floor wins, the overlay scrolls rather than shrinking the diagram.
+      var scale = Math.max(Math.min(availW / w, availH / h), onPageW > 0 ? onPageW / w : 0);
+      node.style.width = w * scale + "px";
+      node.style.height = h * scale + "px";
+      node.style.maxWidth = "none";       // mermaid.js sets an inline max-width; drop it
+      node.style.maxHeight = "none";
+    }
+
+    function open(node) {
+      var overlay = document.createElement("div");
+      overlay.className = "dgm-zoom-overlay";
+      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("aria-label", "Enlarged diagram");
+
+      var onPageW = node.getBoundingClientRect().width;
+      var clone = node.cloneNode(true);
+      if (clone.tagName && clone.tagName.toLowerCase() === "svg") {
+        var box = (clone.getAttribute("viewBox") || "").split(/[\s,]+/);
+        fit(clone, parseFloat(box[2]), parseFloat(box[3]), onPageW);
+      } else {
+        fit(clone, node.naturalWidth, node.naturalHeight, onPageW);
+      }
+      overlay.appendChild(clone);
+
+      function esc(ev) { if (ev.key === "Escape") destroy(); }
+      function destroy() {
+        overlay.remove();
+        document.removeEventListener("keydown", esc);
+      }
+      overlay.addEventListener("click", destroy);
+      document.addEventListener("keydown", esc);
+      document.body.appendChild(overlay);
+    }
+
+    document.addEventListener("click", function (e) {
+      if (!e.target.closest) return;
+      if (e.target.closest(".dgm-zoom-overlay")) return;  // clicks inside close it
+      if (e.target.closest("a")) return;                  // linked images navigate
+      var node = e.target.closest(SEL);
+      if (!node) return;
+      e.preventDefault();
+      open(node);
+    });
+  })();
+</script>

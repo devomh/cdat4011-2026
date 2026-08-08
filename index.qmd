@@ -1,17 +1,98 @@
 ---
 title: "CDAT 4011 — Machine Learning"
+subtitle: "University of Puerto Rico at Humacao · Department of Mathematics"
+toc: false
 ---
 
-Course site under construction. Lessons appear here, grouped by unit, as they are
-published through the authoring workflow.
+Machine learning builds models that improve from data rather than from rules you write by
+hand. Over 28 lessons this course goes from fitting a straight line to training a
+transformer — classical supervised methods first, then the learning theory that tells you
+whether a model will generalize, then deep learning, and finally the unsupervised and
+reinforcement paradigms.
 
-| Unit | Module | Status |
-|------|--------|--------|
-| I — Introduction | `u01_introduction` | L01 published |
-| II — Supervised Learning | `u02_supervised_learning` | L02-L05 published (unit complete) |
-| III — Learning Theory | `u03_learning_theory` | L06 published |
-| IV — Boosting & Bagging | `u04_ensembles` | pending |
-| V — Neural Networks | `u05_neural_networks` | pending |
-| VI — Unsupervised Learning | `u06_unsupervised_learning` | pending |
-| VII — Dimensionality Reduction | `u07_dimensionality_reduction` | pending |
-| VIII — Reinforcement Learning | `u08_reinforcement_learning` | pending |
+Everything here runs. Every number, table, and figure on these pages was produced by
+executing the code you see next to it.
+
+::: {.callout-tip}
+## Start here
+
+New to the course? Read [What Is Machine
+Learning?](u01_introduction/l01_concept_intro_machine_learning.qmd), then work through
+[Lab: The ML Toolkit & First
+Model](u01_introduction/l02_lab_ml_toolkit_first_model.md) — it gets you training a model
+in the browser within minutes, with nothing to install.
+:::
+
+## How the course works
+
+Each lesson comes in two parts:
+
+- **Concept notes** develop the idea and the mathematics behind an algorithm — what it
+  assumes, what it optimizes, and when it fails. Start here for each lesson.
+- **Labs** are runnable notebooks that implement the method and put it to work on real
+  data. You open them in Google Colab and execute them yourself; every lab is paired with
+  its concept note.
+
+Classical methods use **scikit-learn**; the deep-learning unit uses **PyTorch**.
+
+A short retrieval quiz opens most sessions, covering the previous lesson. It is low-stakes
+and its purpose is to help the material stick, not to rank you.
+
+## Course coverage
+
+| Unit | Lessons | What you will do |
+|------|---------|------------------|
+| [I — Introduction](u01_introduction/l01_concept_intro_machine_learning.qmd) | L01–L02 | What machine learning is and when it is the right tool; the toolkit, and your first trained model end to end |
+| [II — Supervised Learning](u02_supervised_learning/l03_concept_linear_regression.qmd) | L03–L08 | Linear and logistic regression; linear classifiers; Gaussian discriminant analysis; naive Bayes; support vector machines |
+| [III — Learning Theory](u03_learning_theory/l09_concept_bias_variance_cv.qmd) | L09–L11 | The bias–variance dilemma and cross-validation; regularization and model selection; the evaluation metrics that decide whether a model is actually good |
+| [IV — Ensembles](u04_ensembles/l12_concept_trees_bagging.qmd) | L12–L13 | Decision trees and bagging; boosting — turning weak learners into a strong one |
+| [V — Deep Learning](u05_deep_learning/l14_concept_perceptron_neural_networks.qmd) | L14–L22 | Perceptrons to multilayer networks; backpropagation and autodiff; training deep networks; CNNs on MNIST, Fashion-MNIST and CIFAR-10; transfer learning; autoencoders; attention and the Transformer |
+| [VI — Unsupervised Learning](u06_unsupervised_learning/l23_concept_kmeans_clustering.qmd) | L23–L25 | Similarity and k-means; hierarchical and density-based clustering; Gaussian mixtures and the EM algorithm |
+| [VII — Dimensionality Reduction](u07_dimensionality_reduction/l26_concept_pca.qmd) | L26–L27 | Principal component analysis; factor analysis and independent component analysis |
+| [VIII — Reinforcement Learning](u08_reinforcement_learning/l28_concept_reinforcement_learning.qmd) | L28 | The reinforcement-learning paradigm — agents, states, rewards, and how it differs from everything before it |
+
+## Running the labs
+
+Labs are Jupyter notebooks designed to run in **Google Colab** — free, in the browser,
+nothing to install, and a GPU available for the deep-learning lessons. Every lab page
+carries an *Open in Colab* badge at the top; click it and the notebook opens ready to run.
+
+A few things worth knowing:
+
+- **Run the setup cells first.** Each lab opens with two of them: one installs the
+  libraries, one imports them and loads the data. Colab resets between sessions, so run
+  them every time you open a lab.
+- **Save your own copy.** Clicking the badge opens a read-only view of the course
+  notebook. Use *File · Save a copy in Drive* before you start working, or your edits are
+  lost when you close the tab.
+- **The data comes with the lab.** Datasets are bundled or downloaded by the setup cell,
+  so labs work without hunting for files.
+- **The lab pages on this site are read-only.** They show the code together with the
+  output it actually produced — useful for reading and review, but you learn this by
+  running it yourself.
+
+## What you will be able to do
+
+By the end of the course you should be able to:
+
+1. Decide which machine-learning approach fits a given problem.
+2. Preprocess and integrate heterogeneous data sources into input a learning algorithm can
+   use directly.
+3. Write efficient code applying the main machine-learning algorithms to specific problems.
+4. Evaluate a model's performance against the criteria of learning theory — not just its
+   accuracy on the data it was trained on.
+5. Apply recent and specialized deep-learning algorithms, up to and including the
+   architecture behind modern language models.
+
+## How you are assessed
+
+| | |
+|---|---|
+| **Retrieval quizzes** | Short multiple-choice, at the start of most sessions, on the previous lesson |
+| **Assignments** | One per major unit (II, III/IV, V), autograded |
+| **Partial exams** | Exam I after Unit IV — classical supervised learning, learning theory, ensembles; Exam II after Unit V — deep learning |
+| **Final project** | Assigned around week 8, presented during finals week; it is also how Units VI–VIII are assessed |
+| **CDAT 4013 laboratory** | The corequisite lab course contributes **33%** of the final grade |
+
+For the remaining 67%, the syllabus suggests 30% partial exams, 17% assignments, and 20%
+final project. Confirm the weights with your instructor at the start of the term.

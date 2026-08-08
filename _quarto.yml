@@ -8,21 +8,28 @@ project:
 website:
   title: "CDAT 4011 — Machine Learning"
   site-url: https://devomh.github.io/cdat4011-2026/
+  favicon: assets/cdat-owl.svg
   page-navigation: true
   sidebar:
     style: docked
     search: true
+    logo: assets/cdat-owl.svg
+    logo-alt: "CDAT program owl logo"
+    title: "CDAT 4011"    # the owl is the PROGRAM mark; this names the course
+    alignment: center     # centres the header (logo + title) only; nav stays left
+    collapse-level: 1     # units start collapsed; the one holding the current page auto-opens
     contents:
-      - index.qmd
+      - text: "Home"      # relabelled: the header title above already names the course
+        href: index.qmd
       # Modules are added here as lessons are published, grouped by unit.
       # Reset 2026-06-14 for the deep-learning redesign — units repopulate as
       # lessons are regenerated; teaching order in _syllabus/lesson-schedule.md.
-      - section: "Unit I — Introduction"
+      - section: "Unit I — Introduction (L01–L02)"
         contents:
           - u01_introduction/l01_concept_intro_machine_learning.qmd
           - u01_introduction/l02_concept_ml_toolkit_first_model.qmd
           - u01_introduction/l02_lab_ml_toolkit_first_model.md
-      - section: "Unit II — Supervised Learning"
+      - section: "Unit II — Supervised Learning (L03–L08)"
         contents:
           - u02_supervised_learning/l03_concept_linear_regression.qmd
           - u02_supervised_learning/l03_lab_linear_regression.md
@@ -36,7 +43,7 @@ website:
           - u02_supervised_learning/l07_lab_naive_bayes.md
           - u02_supervised_learning/l08_concept_svm.qmd
           - u02_supervised_learning/l08_lab_svm.md
-      - section: "Unit III — Learning Theory"
+      - section: "Unit III — Learning Theory (L09–L11)"
         contents:
           - u03_learning_theory/l09_concept_bias_variance_cv.qmd
           - u03_learning_theory/l09_lab_bias_variance_cv.md
@@ -44,13 +51,13 @@ website:
           - u03_learning_theory/l10_lab_regularization_selection.md
           - u03_learning_theory/l11_concept_evaluation_metrics.qmd
           - u03_learning_theory/l11_lab_evaluation_metrics.md
-      - section: "Unit IV — Ensembles"
+      - section: "Unit IV — Ensembles (L12–L13)"
         contents:
           - u04_ensembles/l12_concept_trees_bagging.qmd
           - u04_ensembles/l12_lab_trees_bagging.md
           - u04_ensembles/l13_concept_boosting.qmd
           - u04_ensembles/l13_lab_boosting.md
-      - section: "Unit V — Deep Learning"
+      - section: "Unit V — Deep Learning (L14–L22)"
         contents:
           - u05_deep_learning/l14_concept_perceptron_neural_networks.qmd
           - u05_deep_learning/l14_lab_perceptron_neural_networks.md
@@ -70,7 +77,7 @@ website:
           - u05_deep_learning/l21_lab_attention.md
           - u05_deep_learning/l22_concept_transformers.qmd
           - u05_deep_learning/l22_lab_transformers.md
-      - section: "Unit VI — Unsupervised Learning"
+      - section: "Unit VI — Unsupervised Learning (L23–L25)"
         contents:
           - u06_unsupervised_learning/l23_concept_kmeans_clustering.qmd
           - u06_unsupervised_learning/l23_lab_kmeans_clustering.md
@@ -78,13 +85,13 @@ website:
           - u06_unsupervised_learning/l24_lab_hierarchical_dbscan.md
           - u06_unsupervised_learning/l25_concept_gaussian_mixtures_em.qmd
           - u06_unsupervised_learning/l25_lab_gaussian_mixtures_em.md
-      - section: "Unit VII — Dimensionality Reduction"
+      - section: "Unit VII — Dimensionality Reduction (L26–L27)"
         contents:
           - u07_dimensionality_reduction/l26_concept_pca.qmd
           - u07_dimensionality_reduction/l26_lab_pca.md
           - u07_dimensionality_reduction/l27_concept_factor_analysis_ica.qmd
           - u07_dimensionality_reduction/l27_lab_factor_analysis_ica.md
-      - section: "Unit VIII — Reinforcement Learning"
+      - section: "Unit VIII — Reinforcement Learning (L28)"
         contents:
           - u08_reinforcement_learning/l28_concept_reinforcement_learning.qmd
           - u08_reinforcement_learning/l28_lab_reinforcement_learning.md
@@ -92,6 +99,7 @@ website:
 format:
   html:
     theme: cosmo
+    css: styles.css
     mermaid:
       theme: neutral      # default theme gives dark subgraph fills (unreadable in light mode)
     toc: true
@@ -99,6 +107,7 @@ format:
     code-copy: true
     code-overflow: wrap
     html-math-method: katex
+    include-after-body: assets/diagram-zoom.html   # click any diagram/figure to enlarge (decision 0023)
 
 execute:
   freeze: auto

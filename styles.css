@@ -1,0 +1,13 @@
+/* Site-local overrides for CDAT 4011. Keep minimal -- theme is cosmo. */
+
+/* The owl SVG carries no intrinsic display size, so Quarto renders it at full
+   viewBox height (~190px), pushing the search box and the unit list below the
+   fold. Cap it. Centring is NOT done here -- it comes from the sidebar's
+   `alignment: center` in _quarto.yml, which Quarto applies to the header
+   (logo + title) and nothing else. */
+.sidebar-logo {
+  max-height: 72px;
+  width: auto;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+}
