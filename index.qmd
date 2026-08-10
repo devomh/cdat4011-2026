@@ -92,7 +92,5 @@ By the end of the course you should be able to:
 | **Assignments** | One per major unit (II, III/IV, V), autograded |
 | **Partial exams** | Exam I after Unit IV — classical supervised learning, learning theory, ensembles; Exam II after Unit V — deep learning |
 | **Final project** | Assigned around week 8, presented during finals week; it is also how Units VI–VIII are assessed |
-| **CDAT 4013 laboratory** | The corequisite lab course contributes **33%** of the final grade |
 
-For the remaining 67%, the syllabus suggests 30% partial exams, 17% assignments, and 20%
-final project. Confirm the weights with your instructor at the start of the term.
+Relative weights are discussed and agreed on the first day of class.
