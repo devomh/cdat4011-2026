@@ -78,7 +78,11 @@ Logistic regression computes the same linear score as L03 and then squashes it:
 
 $$\hat{p} = \sigma(t), \qquad t = b_0 + b_1 x_1 + \dots + b_p x_p, \qquad \sigma(t) = \frac{1}{1 + e^{-t}}$$
 
-The **sigmoid** $\sigma$ is an S-shaped curve with exactly the properties needed:
+![The sigmoid squashes every possible score into $(0, 1)$. It approaches 0 and 1 without ever reaching them, and passes through exactly 0.5 at $t = 0$.](../assets/l04_sigmoid.png){#fig-sigmoid fig-alt="An S-shaped curve rising from near zero on the left to near one on the right, flattening at both ends, and passing through the point (0, 0.5) marked at the centre. Dashed lines mark the horizontal limits at 0 and 1."}
+
+@fig-sigmoid is that squash. The **sigmoid** $\sigma$ is an S-shaped curve whose flat
+tails and single steep middle give exactly the properties needed — three landmarks read
+the whole curve:
 
 | Score $t$ | $\sigma(t)$ | Reading |
 |-----------|-------------|---------|
@@ -131,10 +135,20 @@ Averaged over the training set:
 
 $$L = -\frac{1}{m} \sum_{i=1}^{m} \Big[ y_i \log \hat{p}_i + (1 - y_i) \log(1 - \hat{p}_i) \Big]$$
 
-The bracket picks the term that matches each example's true label; the cost explodes
-as the model gets *confidently* wrong, which is exactly the behavior to punish in a
-probability machine. Unlike least squares, this loss has **no closed-form minimizer**
-— there is no normal equation to jump to. But it is convex (one bowl, one bottom), so
+The bracket picks the term that matches each example's true label — only one of the two
+ever survives:
+
+| If the true label is | the bracket reduces to | so the loss is |
+|---|---|---|
+| $y_i = 1$ (portoricensis) | $\log \hat{p}_i$ | $-\log \hat{p}_i$ — pays for probability *withheld* from class 1 |
+| $y_i = 0$ (coqui) | $\log(1 - \hat{p}_i)$ | $-\log(1 - \hat{p}_i)$ — pays for probability *given* to class 1 |
+
+Either way the cost explodes as the model gets *confidently* wrong, and it does so at a
+steady rate: every further factor of ten of probability withheld from the true class adds a
+fixed $2.30$ to the bill ($\hat{p}_{\text{true}} = 0.1, 0.01, 0.001$ cost $2.30, 4.61,
+6.91$). That is exactly the behavior to punish in a probability machine. Unlike least
+squares, this loss has **no closed-form minimizer** — there is no normal equation to
+jump to. But it is convex (one bowl, one bottom), so
 **gradient descent** — the general route L03 named — reliably finds the best
 coefficients. This is why that name mattered.
 
@@ -151,6 +165,14 @@ predicts the class with the largest (the *argmax*). Binary logistic regression i
 special case (one score pinned to zero recovers the sigmoid). scikit-learn's
 `LogisticRegression` switches to softmax automatically when it sees more than two
 classes; the lab runs it on the three iris species.
+
+::: {.column-margin}
+**The other face of this model.** [statsmodels](https://www.statsmodels.org) fits the same
+thing — `Logit` for two classes, `MNLogit` for $K$ — but reports it like a statistician:
+each coefficient with a standard error, a $p$-value, and a confidence interval, in a
+`.summary()` table. scikit-learn omits all of that by design; it optimizes for prediction,
+not inference. Logistic regression in a published paper is usually statsmodels' output.
+:::
 
 ## When to Use / When NOT to Use
 
