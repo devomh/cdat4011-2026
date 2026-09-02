@@ -116,25 +116,80 @@ coordinates is expensive, and choosing the right lift by hand is guesswork.
 
 ## The Kernel Trick
 
-Here is the structural fact that makes SVMs famous: the SVM optimization touches the training data
-**only through dot products** between pairs of points. It never needs a point's lifted coordinates —
-only the dot products *between* lifted points.
+### Where the dot products actually are
 
-A **kernel** is a function that returns exactly that — the lifted dot product — computed directly from
-the original coordinates, without ever building the lift:
+Here is the structural fact that makes SVMs famous. A trained linear SVM's decision function can be
+written two equivalent ways — the weight form you already know, and the **dual form** the optimizer
+actually produces:
+
+$$f(\mathbf{x}) \;=\; \mathbf{w} \cdot \mathbf{x} + b \;=\; \sum_{i \in S} \alpha_i\, y_i\, (\mathbf{x}_i \cdot \mathbf{x}) \;+\; b$$
+
+where $S$ is the set of support vectors and $\alpha_i > 0$ is the weight training assigned to each one
+(every other training point gets $\alpha_i = 0$ — "only the support vectors matter", now in symbols).
+Read the right-hand side slowly: **the point being classified appears nowhere except inside a dot
+product with a training point.** Training has the same shape — there the data enters only as
+$\mathbf{x}_i \cdot \mathbf{x}_j$, dot products between *pairs* of training points (Deep Dive below).
+
+So an SVM never actually needs coordinates. It needs dot products.
+
+### The substitution
+
+Now lift. Running the SVM on lifted points means every $\mathbf{x}$ becomes $\phi(\mathbf{x})$ — and
+therefore every dot product becomes a dot product *of lifted points*. A **kernel** is a function that
+returns that lifted dot product directly from the original coordinates, without ever building $\phi$:
 
 $$K(\mathbf{x}, \mathbf{z}) = \phi(\mathbf{x}) \cdot \phi(\mathbf{z})$$
 
-Swap the kernel, and the SVM works in a different lifted space at no extra cost. That substitution is
-the **kernel trick**.
+Which reduces the whole change to a single substitution — and the two places the data enters are the
+only places anything happens. This table *is* the kernel trick:
 
-| Kernel | $K(\mathbf{x}, \mathbf{z})$ | What it buys |
-|--------|------------------------------|--------------|
-| **Linear** | $\mathbf{x} \cdot \mathbf{z}$ | the plain street; fast, interpretable |
-| **Polynomial** | $(1 + \mathbf{x} \cdot \mathbf{z})^d$ | curved boundaries from feature interactions up to degree $d$ |
-| **RBF (Gaussian)** | $\exp(-\gamma \lVert \mathbf{x} - \mathbf{z} \rVert^2)$ | the default for "nonlinear, no idea what shape": similarity decays with distance; boundaries of nearly any shape |
+| The data enters as... | Linear SVM | Lifted SVM (naive) | Kernelized SVM |
+|---|---|---|---|
+| **in training** | $\mathbf{x}_i \cdot \mathbf{x}_j$ | $\phi(\mathbf{x}_i) \cdot \phi(\mathbf{x}_j)$ | $K(\mathbf{x}_i, \mathbf{x}_j)$ |
+| **in $f(\mathbf{x})$** | $\mathbf{x}_i \cdot \mathbf{x}$ | $\phi(\mathbf{x}_i) \cdot \phi(\mathbf{x})$ | $K(\mathbf{x}_i, \mathbf{x})$ |
+| **cost** | cheap; straight boundaries only | build $\phi$ per point: expensive or impossible | one kernel call per pair |
 
-The RBF kernel's **gamma** sets how far each training point's influence reaches: small gamma, broad
+Everything wrapped around that factor is untouched — same objective, same C, same support vectors,
+same solver, same $\sum_{i \in S} \alpha_i y_i (\cdot) + b$. The kernelized decision function is the
+one you already read, with the middle swapped out:
+
+$$f(\mathbf{x}) \;=\; \sum_{i \in S} \alpha_i\, y_i\, K(\mathbf{x}_i, \mathbf{x}) \;+\; b$$
+
+Swap one function and the SVM is working in a different space.
+
+### The substitution, checked with numbers
+
+Take the degree-2 polynomial kernel on two features, $K(\mathbf{x}, \mathbf{z}) = (1 + \mathbf{x} \cdot \mathbf{z})^2$.
+Multiplied out, it is exactly the dot product of this lift into six dimensions:
+
+$$\phi(\mathbf{x}) = \big(1,\; \sqrt{2}\,x_1,\; \sqrt{2}\,x_2,\; x_1^2,\; \sqrt{2}\,x_1 x_2,\; x_2^2\big)$$
+
+Try it on $\mathbf{x} = (1, 2)$ and $\mathbf{z} = (3, 1)$:
+
+- **Kernel route.** $\mathbf{x} \cdot \mathbf{z} = 3 + 2 = 5$, so $K(\mathbf{x}, \mathbf{z}) = (1 + 5)^2 = 36$.
+  Two multiplications, one add, one square — all in the original 2-D coordinates.
+- **Lift route.** $\phi(\mathbf{x}) = (1, \sqrt{2}, 2\sqrt{2}, 1, 2\sqrt{2}, 4)$ and
+  $\phi(\mathbf{z}) = (1, 3\sqrt{2}, \sqrt{2}, 9, 3\sqrt{2}, 1)$; their dot product is
+  $1 + 6 + 4 + 9 + 12 + 4 = 36$. Twelve coordinates constructed, six multiplications, same answer.
+
+The two routes agree because they compute the same quantity — but only the first one stays in the
+original space. Six coordinates is a tolerable waste; the point is the scaling. A degree-$d$
+polynomial on $p$ features has $\binom{p+d}{d}$ lifted coordinates — 53,130 of them for $p = 20$,
+$d = 5$ — and the **RBF kernel's $\phi$ is infinite-dimensional**, so there the lift route is not
+merely slow, it is impossible. $K$ costs the same either way. (The lab checks this equality in code,
+then confirms that a fitted `SVC`'s `decision_function` is precisely the kernel sum in the table
+above.)
+
+### The kernels you will actually use
+
+| Kernel | $K(\mathbf{x}, \mathbf{z})$ | The space it implies | What it buys |
+|--------|------------------------------|----------------------|--------------|
+| **Linear** | $\mathbf{x} \cdot \mathbf{z}$ | the original features ($\phi$ = identity) | the plain street; interpretable |
+| **Polynomial** | $(1 + \mathbf{x} \cdot \mathbf{z})^d$ | monomials up to degree $d$ | curved boundaries |
+| **RBF (Gaussian)** | $\exp(-\gamma \lVert \mathbf{x} - \mathbf{z} \rVert^2)$ | infinite-dimensional | almost any boundary shape |
+
+The RBF kernel measures **similarity that decays with distance**, and its **gamma** sets how far each
+training point's influence reaches: small gamma, broad
 influence, smooth boundaries; large gamma, tiny islands of influence around individual points — and an
 express lane to overfitting (the lab's Exercise 2).
 
@@ -182,8 +237,21 @@ $$\underset{b_0, \dots, b_p,\; M}{\text{maximize}} \; M \quad \text{subject to} 
 with labels coded $y_i \in \{-1, +1\}$, so $y_i f(\mathbf{x}_i) > 0$ means "correctly classified" and
 the constraint reads "every point at least $M$ from the boundary, on its correct side". The
 normalization pins the coefficients' scale so $M$ is a real distance. The soft-margin version adds
-slack variables priced by C. Solving it (via the dual problem, which is also where the data appears
-only as dot products — the kernel trick's entry point) belongs to an optimization course; using the
+slack variables priced by C.
+
+Solvers do not attack that form directly; they solve its **dual** — which is where the $\alpha_i$ of
+the main text come from, and where the dot products live:
+
+$$\underset{\alpha}{\text{maximize}} \;\; \sum_{i=1}^{n} \alpha_i \;-\; \frac{1}{2} \sum_{i=1}^{n} \sum_{j=1}^{n} \alpha_i \alpha_j\, y_i y_j\, (\mathbf{x}_i \cdot \mathbf{x}_j)$$
+
+$$\text{subject to} \quad 0 \leq \alpha_i \leq C \;\; \text{for all } i, \qquad \sum_{i=1}^{n} \alpha_i y_i = 0$$
+
+Three things to notice. The training data appears **only** as $\mathbf{x}_i \cdot \mathbf{x}_j$:
+replace that one factor with $K(\mathbf{x}_i, \mathbf{x}_j)$ and you have the kernelized SVM, with
+nothing else in the problem touched. C enters only as the ceiling on each $\alpha_i$ — the soft
+margin, in one symbol. And the solution is sparse: $\alpha_i = 0$ for every point that is not a
+support vector, which is why $f(\mathbf{x})$ sums over $S$ rather than over the whole training set.
+Deriving all this (Lagrange multipliers, KKT conditions) belongs to an optimization course; using the
 solution well belongs to this one.
 :::
 
@@ -215,7 +283,7 @@ point of your application, that is a sign logistic regression was the right tool
 | Hard vs soft margin | no violations allowed vs violations priced by C |
 | C dial | low = wide tolerant street; high = narrow strict, overfit risk |
 | The lift | add dimensions until a flat cut separates the data |
-| Kernel trick | lifted dot products computed directly; the lift never built |
+| Kernel trick | every $\mathbf{x}_i \cdot \mathbf{x}_j$ becomes $K(\mathbf{x}_i, \mathbf{x}_j)$; the lift is never built |
 | RBF + gamma | default nonlinear kernel; gamma = reach of each point's influence |
 | Overfitting (preview) | great on training, worse on test; Unit III's subject |
 

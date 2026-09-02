@@ -221,6 +221,79 @@ This is the concept note's promise made visible: in the lifted space the boundar
 hyperplane, but projected back onto the bay map it bends around each crescent. No hand-designed curve
 -- the kernel found this shape from dot products alone.
 
+## Step 3: "From Dot Products Alone" -- Verified
+
+That last sentence is a strong claim. Check it, in two parts.
+
+**Part 1: the kernel really does return a lifted dot product.** The degree-2 polynomial kernel
+`(1 + x.z)**2` claims to equal `phi(x) . phi(z)` for the six-coordinate lift the concept note lists.
+Compute both routes for one pair of points:
+
+```python
+# The kernel route and the lift route, side by side
+x = np.array([1.0, 2.0])
+z = np.array([3.0, 1.0])
+
+def phi(v):                       # the six-coordinate lift
+    return np.array([1, np.sqrt(2) * v[0], np.sqrt(2) * v[1],
+                     v[0] ** 2, np.sqrt(2) * v[0] * v[1],
+                     v[1] ** 2])
+
+kernel_route = (1 + x @ z) ** 2   # never leaves 2 dimensions
+lift_route = phi(x) @ phi(z)      # builds 6 coordinates each
+
+print(f"kernel route:  (1 + x.z)^2     = {kernel_route:.1f}")
+print(f"lift route:    phi(x) . phi(z) = {lift_route:.1f}")
+```
+
+~~~text
+kernel route:  (1 + x.z)^2     = 36.0
+lift route:    phi(x) . phi(z) = 36.0
+~~~
+
+Identical -- and the kernel route never built a lifted coordinate. Here that saves you twelve
+numbers; for the RBF kernel `phi` has *infinitely many* coordinates, so there the lift route is not
+slow, it is impossible, and the kernel is the only way to reach that space.
+
+**Part 2: the fitted SVM really does predict with nothing but kernel values.** The concept note's
+decision function is a weighted sum of kernel values between the new point and each support vector,
+`sum_i alpha_i * y_i * K(x_i, x) + b`. `SVC` exposes every piece: `dual_coef_` holds the products
+`alpha_i * y_i`, `support_vectors_` the $\mathbf{x}_i$, `intercept_` the $b$. Rebuild the score by
+hand and compare it to sklearn's own:
+
+```python
+from sklearn.metrics.pairwise import rbf_kernel
+
+# gamma="scale", spelled out so rbf_kernel gets the same value
+gamma = 1.0 / (Xp_train.shape[1] * Xp_train.to_numpy().var())
+model = SVC(kernel="rbf", gamma=gamma).fit(Xp_train, yp_train)
+
+alpha_y = model.dual_coef_[0]           # the alpha_i * y_i
+# kernel values only -- no lifted coordinate is ever built
+K = rbf_kernel(Xp_test, model.support_vectors_, gamma=gamma)
+by_hand = K @ alpha_y + model.intercept_[0]   # + b, and done
+
+sk_score = model.decision_function(Xp_test)
+gap = np.abs(by_hand - sk_score).max()
+n_sv, n_train = len(alpha_y), len(Xp_train)
+
+print("sklearn decision_function:", np.round(sk_score[:4], 4))
+print("our kernel sum           :", np.round(by_hand[:4], 4))
+print(f"largest disagreement: {gap:.1e}")
+print(f"kernel values: {n_sv} of {n_train} training pings")
+```
+
+~~~text
+sklearn decision_function: [ 1.307   1.3615 -1.4418  1.2966]
+our kernel sum           : [ 1.307   1.3615 -1.4418  1.2966]
+largest disagreement: 5.3e-15
+kernel values: 55 of 225 training pings
+~~~
+
+The disagreement is floating-point dust. Every prediction that snaking boundary makes is 55 kernel
+evaluations, a weighted sum, and an intercept -- the infinite-dimensional space it "works in" is never
+built, visited, or stored.
+
 ## Your Turn
 
 ### Exercise 1 -- The C dial
