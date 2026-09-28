@@ -12,8 +12,9 @@ duration: "75 mins"
 
 By the end of this lesson you will be able to:
 
-- **Explain** how a decision tree splits the data (Gini impurity or entropy,
-  greedy recursion) and read a fitted tree. *(Understand)*
+- **Compute** how mixed a node is (entropy or Gini) and how much a split
+  gains, **explain** how a tree grows by greedy recursion, and read a fitted
+  tree. *(Apply / Understand)*
 - **Diagnose** why an unpruned tree overfits, and **use** `max_depth` as the
   flexibility dial. *(Analyze / Apply)*
 - **Explain** bagging as variance reduction by averaging many bootstrap-trained
@@ -56,42 +57,252 @@ the lone expert; a random forest is the panel.
 
 A tree breaks a prediction into a sequence of single-feature questions, starting at the
 **root** and walking down to a **leaf** that carries the answer. A toy training set —
-should I study, party, or go to the pub? — makes the shape obvious:
+tonight, do I party, study, go to the pub, or watch TV? — makes the shape obvious:
 
 | Deadline? | Party? | Lazy? | Activity |
 |-----------|--------|-------|----------|
 | Urgent | Yes | Yes | Party |
 | Urgent | No | Yes | Study |
+| Near | Yes | Yes | Party |
 | None | Yes | No | Party |
 | None | No | Yes | Pub |
+| None | Yes | No | Party |
+| Near | No | No | Study |
+| Near | No | Yes | TV |
+| Near | Yes | Yes | Party |
+| Urgent | No | No | Study |
 
-The learner asks the *most informative* question first ("Is there a party?"), splits the
-rows, and recurses on each branch until the rows in a node share a label. The result is
-a set of if-then rules — transparent in a way no other model in this course is.
+The learner picks one question to ask first, splits the rows by the answer, and recurses
+on each branch until the rows in a node share a label. The result is a set of if-then
+rules — transparent in a way no other model in this course is. Here the first question
+turns out to be "Is there a party?", and the next three sections show how the learner
+*computes* that choice instead of guessing it.
 
-The algorithm scikit-learn uses is **CART** (Classification And Regression Trees): it
-builds **binary** splits and works for both classification and regression.
+The algorithm scikit-learn uses is **CART** (Classification And Regression Trees): every
+node asks one **yes/no** question, and it works for both classification and regression.
 
-## How a Tree Chooses Its Splits
+## Measuring How Mixed a Group Is
 
-At each node CART tries every feature and threshold and keeps the split that makes the
-two children as **pure** as possible — as close as it can get to "all one class." Purity
-is measured one of two ways:
+To choose a question, the tree needs a number that says how mixed a group of labels is.
+Picture a bag of 20 balls. If every ball is blue, drawing one tells you nothing — you
+knew it would be blue. If the bag is half blue and half orange, every draw is a coin
+flip. **Entropy** turns that surprise into a number:
 
-| Criterion | Formula | Reads as |
-|-----------|---------|----------|
-| **Gini impurity** (default) | $G = 1 - \sum_k p_k^2$ | chance two random picks from the node disagree; 0 = pure |
-| **Entropy** | $H = -\sum_k p_k \log_2 p_k$ | bits of "surprise" in the node; 0 = pure |
+$$H = -\sum_k p_k \log_2 p_k$$
 
-Both are zero for a perfectly pure node and largest for a 50/50 mix. The split chosen is
-the one with the greatest **information gain** — the parent's impurity minus the
-sample-weighted impurity of its children:
+where $p_k$ is the fraction of the group in class $k$ (a ball color here, a label in a
+tree). Each class contributes its share $p_k$ times its surprise $\log_2(1/p_k)$: rare
+colors are surprising, but they are rare. For 15 blue and 5 orange, $p = (0.75, 0.25)$:
+
+$$\begin{aligned}
+H &= 0.75 \log_2 \tfrac{1}{0.75} + 0.25 \log_2 \tfrac{1}{0.25} \\
+  &= 0.311 + 0.500 = 0.811
+\end{aligned}$$
+
+![Five bags of 20 balls, from pure to evenly mixed, with the entropy of each. One dominant color keeps entropy low even when four colors are present.](../assets/l12_entropy_bags.png){#fig-entropy-bags fig-alt="Five square bags of twenty colored dots. Left to right: 20 blue, entropy 0.000; 15 blue and 5 orange, 0.811; 17 blue with one orange, one green and one gold, 0.848; 10 blue and 10 orange, 1.000; 5 each of blue, orange, green and gold, 2.000."}
+
+| Bag (20 balls) | $H$ |
+|----------------|-----|
+| 20 blue | 0.000 |
+| 19 blue · 1 orange | 0.286 |
+| 15 blue · 5 orange | 0.811 |
+| 17 blue · 1 orange · 1 green · 1 gold | 0.848 |
+| 10 blue · 10 orange | 1.000 |
+| 10 blue · 5 orange · 5 green | 1.500 |
+| 5 of each of four colors | 2.000 |
+
+@fig-entropy-bags and the table read the same way:
+
+- **Pure is zero.** A one-color bag scores 0, and one stray ball barely moves it (0.286).
+- **Even beats lopsided.** Going from 15/5 to 10/10 raises entropy from 0.811 to 1.000.
+- **More colors is not enough.** The 17/1/1/1 bag has four colors but scores 0.848 —
+  *below* the two-color 10/10 — because one color dominates. Entropy rewards
+  **evenness**, not just variety.
+- **The ceiling grows with the number of classes.** An even mix of $K$ colors scores
+  $\log_2 K$: 1 bit for two colors, 2 bits for four.
+
+::: {.column-margin}
+**Ecologists use this formula.** The **Shannon diversity index** $H'$ of a community is
+the same sum over the species' proportions, with the natural log $\ln$ in place of
+$\log_2$. A plot dominated by one species scores low; an even mix of many scores high.
+Only the unit changes (nats instead of bits).
+:::
+
+## Splitting the Bag: Gain
+
+Now the tree's move. Take the 10 blue / 10 orange bag ($H = 1.000$) and sort the balls by
+a yes/no question about them — say, "is the ball large?" A good question produces groups
+that are each close to one color. A weak one leaves them nearly as mixed as before:
+
+| Question | Groups, blue/orange ($H$) | Weighted $H$ | Gain |
+|----------|---------------------------|--------------|------|
+| good | 9/1 (0.469) · 1/9 (0.469) | 0.469 | **0.531** |
+| weak | 8/4 (0.918) · 2/6 (0.811) | 0.875 | 0.125 |
+
+"Weighted" means each group counts in proportion to its size. For the weak question:
+
+$$\tfrac{12}{20} \cdot 0.918 + \tfrac{8}{20} \cdot 0.811 = 0.875$$
+
+The **gain** is how much the mix went down, $1.000 - 0.875 = 0.125$. That is the whole
+rule. Write $I(\cdot)$ for
+**whichever impurity measure you chose** — entropy $H$ so far, or Gini $G$ below — and the
+gain of a split is:
 
 $$\text{Gain} = I(\text{parent}) - \sum_{\text{child}} \frac{n_{\text{child}}}{n_{\text{parent}}}\, I(\text{child})$$
+
+::: {.callout-important title="I is a placeholder, not a third formula"}
+Pick **one** criterion — $H$ or $G$ — and use that same measure for the parent and for
+every child. Mixing them (entropy for the parent, Gini for the children) gives a
+meaningless number. In scikit-learn the choice is the `criterion=` argument: `"gini"`
+(the default) or `"entropy"`.
+:::
+
+With entropy the gain is called **information gain**; with Gini it is the **Gini
+decrease**; in general, and in scikit-learn's docs, the **impurity decrease**.
+
+## The Toy Tree, Computed
+
+Back to the ten rows. The labels are 5 Party, 3 Study, 1 Pub, 1 TV. Pub and TV each
+contribute $0.1 \log_2 10$, so the parent's entropy is:
+
+$$\begin{aligned}
+H &= 0.5 \log_2 2 + 0.3 \log_2 \tfrac{10}{3} \\
+  &\quad + 0.2 \log_2 10 \\
+  &= 0.500 + 0.521 + 0.664 \\
+  &= 1.685
+\end{aligned}$$
+
+CART asks only yes/no questions, so the candidates are "Party = Yes?", "Lazy = Yes?", and
+one question per Deadline value. Worked for Party:
+
+- **Party = Yes** (5 rows): all Party, so $H = 0$.
+- **Party = No** (5 rows): 3 Study, 1 Pub, 1 TV, so
+  $$\begin{aligned}
+  H &= 0.6 \log_2 \tfrac{5}{3} + 0.4 \log_2 5 \\
+    &= 0.442 + 0.929 = 1.371
+  \end{aligned}$$
+- **Gain**, weighting each child by its 5 of 10 rows:
+  $$\begin{aligned}
+  \text{Gain} &= 1.685 - \left(\tfrac{5}{10} \cdot 0 + \tfrac{5}{10} \cdot 1.371\right) \\
+              &= 1.685 - 0.685 = 1.000
+  \end{aligned}$$
+
+The same arithmetic for every candidate:
+
+| Question | Information gain |
+|----------|------------------|
+| Party = Yes? | **1.000** |
+| Deadline = None? | 0.396 |
+| Deadline = Urgent? | 0.245 |
+| Deadline = Near? | 0.210 |
+| Lazy = Yes? | 0.210 |
+
+"Is there a party?" wins by a wide margin. Every "yes" row is Party, so that branch is
+already a pure leaf, and the question removes a full bit of uncertainty. The tree then
+repeats the whole search on the Party = No branch, using only that branch's rows.
 
 The search is **greedy**: it takes the best split *now*, never reconsidering — locally
 optimal, cheap, and good enough in practice. A fitted tree's nodes report exactly this:
 the split test, the impurity, the sample count, and the class distribution (`value`).
+
+### Gini: the Default Criterion
+
+scikit-learn's default measure is the **Gini impurity**, the chance that two balls drawn
+at random (with replacement) from the group have different colors:
+
+$$G = 1 - \sum_k p_k^2$$
+
+| Criterion | Reads as | Pure node | Even mix of $K$ classes |
+|-----------|----------|-----------|-------------------------|
+| **Entropy** $H$ | bits of surprise | 0 | $\log_2 K$ |
+| **Gini** $G$ (default) | chance two random draws disagree | 0 | $1 - 1/K$ |
+
+Gini needs no logarithm, so it is a little cheaper, and it usually picks the same split.
+Everything above works with $G$ in place of $H$; only the numbers change. It is why every
+node in the lab's `plot_tree` reports a `gini` value.
+
+### Worked Details (Optional)
+
+Three optional blocks carry the computation further: the same table scored with Gini, how
+CART handles categorical and numeric features, and the tree's second question.
+
+::: {.callout-note title="Worked in full: the same table with Gini (Optional)" collapse="true"}
+
+The parent's Gini is $G = 1 - (0.5^2 + 0.3^2 + 0.1^2 + 0.1^2) = 1 - 0.36 = 0.640$. For
+Party = Yes? the "yes" child is pure ($G = 0$) and the "no" child has
+$G = 1 - (0.6^2 + 0.2^2 + 0.2^2) = 0.560$, so the gain is
+$0.640 - \tfrac{5}{10} \cdot 0.560 = 0.360$. Side by side with entropy:
+
+| Question | Entropy gain | Gini gain |
+|----------|--------------|-----------|
+| Party = Yes? | **1.000** | **0.360** |
+| Deadline = None? | 0.396 | 0.078 |
+| Deadline = Urgent? | 0.245 | 0.078 |
+| Deadline = Near? | 0.210 | 0.023 |
+| Lazy = Yes? | 0.210 | 0.040 |
+
+The winner is the same, by far. Below the top the two measures disagree: entropy
+separates Deadline = None? from Deadline = Urgent? (0.396 vs 0.245) where Gini ties them,
+and Gini ranks Lazy above Deadline = Near where entropy ties them. The bags show the same
+thing. Entropy puts 17/1/1/1 above 15/5 (0.848 vs 0.811), but Gini puts it below (0.270
+vs 0.375): the logarithm gives rare colors more weight, while Gini is dominated by the
+big class. Disagreements like these are why the two criteria sometimes grow slightly
+different trees (lab Exercise 2).
+
+Never compare an entropy gain with a Gini gain. They are on different scales: 1.000 and
+0.360 describe the same split.
+:::
+
+::: {.callout-note title="How CART really asks: yes/no questions and numeric thresholds (Optional)" collapse="true"}
+
+**Categorical features.** Deadline has three values, but a CART node never splits three
+ways. A three-valued feature offers three yes/no questions — Deadline = Urgent?, Near?,
+None? — which is why the table above lists three Deadline rows. Older algorithms such as
+**ID3**, which many textbooks use for this very example, split into one branch per
+value; that three-way Deadline split scores 0.534 (those books print 0.5345). It is a different question, so it gets a different gain, and Party wins either way.
+In scikit-learn, categorical features are usually one-hot encoded first, which produces
+exactly these yes/no questions (lab Step 1 does this).
+
+**Numeric features.** A number can be cut anywhere, but only a few cuts give *different*
+groups. CART sorts the values and tries the midpoint between each neighboring pair. Six
+coqui calls, sorted by `trill_depth` (species in parentheses): 0.12 (A), 0.25 (B),
+0.31 (A), 0.48 (A), 0.60 (B), 0.77 (B).
+
+The parent is 3 A / 3 B, so $G = 0.500$. The five candidate questions
+`trill_depth <= t`:
+
+| $t$ | Yes side | No side | Weighted $G$ | Gain |
+|-----|----------|---------|--------------|------|
+| 0.185 | A | B A A B B | 0.400 | 0.100 |
+| 0.28 | A B | A A B B | 0.500 | 0.000 |
+| 0.395 | A B A | A B B | 0.444 | 0.056 |
+| 0.54 | A B A A | B B | 0.250 | **0.250** |
+| 0.685 | A B A A B | B | 0.400 | 0.100 |
+
+The best cut is `trill_depth <= 0.54`: it leaves a pure B group and a mostly-A group.
+The lab's root question, `trill_depth <= 0.03`, came out of exactly this search, run
+over 420 calls and all eight features at once.
+:::
+
+::: {.callout-note title="One level down: growing the Party = No branch (Optional)" collapse="true"}
+
+The Party = Yes branch is pure, so it becomes a leaf ("Party"). The Party = No branch
+holds 5 rows — 3 Study, 1 Pub, 1 TV — with $H = 1.371$. The tree repeats the search on
+**those five rows only**:
+
+| Question | Yes group | No group | Weighted $H$ | Gain |
+|----------|-----------|----------|--------------|------|
+| Deadline = None? | Pub | Study, Study, Study, TV | 0.649 | **0.722** |
+| Deadline = Urgent? | Study, Study | Pub, Study, TV | 0.951 | 0.420 |
+| Deadline = Near? | Study, TV | Study, Pub, Study | 0.951 | 0.420 |
+| Lazy = Yes? | Study, Pub, TV | Study, Study | 0.951 | 0.420 |
+
+The second question is "Deadline = None?", and its "yes" side is a pure Pub leaf. Notice
+that the gains are recomputed on the branch's own rows: Lazy was worth 0.210 at the root
+and 0.420 here. The search continues on the four remaining rows until every leaf is pure.
+The lab (Step 1) fits scikit-learn's tree to the same table and prints the result: the
+same two questions, in the same order. Lab Exercise 3 has you compute this table yourself.
+:::
 
 ## Why a Single Tree Overfits
 
@@ -215,7 +426,9 @@ near-identical strong ones. Diversity, not individual strength, is what the ense
 | Concept | The one-liner |
 |---------|---------------|
 | Decision tree | nested yes/no splits; readable; CART builds binary splits |
-| Gini / entropy | impurity measures; a split maximizes the impurity drop (information gain) |
+| Entropy / Gini | how mixed a node is; 0 = pure; highest for an even mix ($\log_2 K$ / $1 - 1/K$) |
+| Gain | $I$(parent) minus the size-weighted $I$(children), with $I$ = the **one** chosen criterion |
+| CART questions | always yes/no; numeric features try the midpoints between sorted values |
 | Greedy splitting | take the best split now, recurse; locally optimal |
 | `max_depth` | the flexibility dial; unbounded -> memorizes (train 1.000) |
 | Tree overfitting | low bias, high variance — the L09 cautionary tale in the flesh |

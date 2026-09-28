@@ -5,12 +5,13 @@ lesson: "12"
 type: lab
 tags: [decision-trees, bagging, random-forest, feature-importance, scikit-learn]
 difficulty: intermediate
-duration: "45 mins"
+duration: "55 mins"
 ---
 
-**Goal:** watch a single decision tree score a perfect 1.000 on training data and then
-stumble on new frogs -- the high-variance overfitting L09 warned about -- then cure it by
-growing a whole forest and letting the trees vote. You will fit and read a tree, use
+**Goal:** compute by hand what a tree computes at every node, then watch a single decision
+tree score a perfect 1.000 on training data and stumble on new frogs -- the high-variance
+overfitting L09 warned about -- and cure it by growing a whole forest and letting the
+trees vote. You will measure impurity and gain, fit and read a tree, use
 `max_depth` as a dial, bag many trees into an ensemble, and read a random forest's feature
 importances. Pairs with the concept note
 [Decision Trees & Bagging](l12_concept_trees_bagging.qmd).
@@ -72,7 +73,147 @@ print(len(X_train), "train /", len(X_test), "test")
 420 train / 180 test
 ~~~
 
-## Step 1: One Tree Overfits
+## Step 1: Impurity by Hand
+
+Before growing trees on the coqui data, compute what a tree computes at every node, on the
+small examples from the concept note. Two functions measure how mixed a group of labels
+is -- entropy (bits of surprise) and Gini (the chance two random draws disagree). Try them
+on seven bags of 20 colored balls:
+
+```python
+def entropy(labels):
+    # bits of surprise: sum of p * log2(1/p)
+    _, counts = np.unique(labels, return_counts=True)
+    p = counts / counts.sum()
+    return float((p * np.log2(1 / p)).sum())
+
+def gini(labels):
+    # chance two random draws disagree
+    _, counts = np.unique(labels, return_counts=True)
+    p = counts / counts.sum()
+    return float(1 - (p ** 2).sum())
+
+colors = ["blue", "orange", "green", "gold"]
+bags = [[20], [19, 1], [15, 5], [17, 1, 1, 1],
+        [10, 10], [10, 5, 5], [5, 5, 5, 5]]
+for counts in bags:
+    balls = np.repeat(colors[:len(counts)], counts)
+    name = "/".join(str(c) for c in counts)
+    print(f"{name:>10s}  H={entropy(balls):.3f}"
+          f"  G={gini(balls):.3f}")
+```
+
+~~~text
+        20  H=0.000  G=0.000
+      19/1  H=0.286  G=0.095
+      15/5  H=0.811  G=0.375
+  17/1/1/1  H=0.848  G=0.270
+     10/10  H=1.000  G=0.500
+    10/5/5  H=1.500  G=0.625
+   5/5/5/5  H=2.000  G=0.750
+~~~
+
+Both measures are 0 for the pure bag and grow as the mix gets more even. On both, the
+four-color 17/1/1/1 bag scores below the two-color 10/10 bag: one dominant color keeps a
+bag fairly unmixed, however many colors it holds. Now compare 15/5 with 17/1/1/1. Entropy
+ranks 17/1/1/1 higher (0.848 vs 0.811) but Gini ranks it lower (0.270 vs 0.375). The two
+measures agree on the idea, not on every number.
+
+Now the ten-row toy table from the concept note, and a `gain` function that scores one
+yes/no question -- the only kind of question CART asks:
+
+```python
+toy = pd.DataFrame({
+    "Deadline": ["Urgent", "Urgent", "Near", "None", "None",
+                 "None", "Near", "Near", "Near", "Urgent"],
+    "Party": ["Yes", "No", "Yes", "Yes", "No",
+              "Yes", "No", "No", "Yes", "No"],
+    "Lazy": ["Yes", "Yes", "Yes", "No", "Yes",
+             "No", "No", "Yes", "Yes", "No"],
+    "Activity": ["Party", "Study", "Party", "Party", "Pub",
+                 "Party", "Study", "TV", "Party", "Study"],
+})
+
+def gain(df, feature, value, impurity=entropy):
+    # the yes/no question: is df[feature] == value?
+    target = df["Activity"]
+    yes = target[df[feature] == value]
+    no = target[df[feature] != value]
+    n = len(df)
+    children = (len(yes) / n * impurity(yes)
+                + len(no) / n * impurity(no))
+    return impurity(target) - children
+
+questions = [("Party", "Yes"), ("Deadline", "None"),
+             ("Deadline", "Urgent"), ("Deadline", "Near"),
+             ("Lazy", "Yes")]
+print(f"parent entropy: {entropy(toy['Activity']):.3f}")
+for feature, value in questions:
+    g = gain(toy, feature, value)
+    print(f"{feature} = {value}?  gain {g:.3f}")
+```
+
+~~~text
+parent entropy: 1.685
+Party = Yes?  gain 1.000
+Deadline = None?  gain 0.396
+Deadline = Urgent?  gain 0.245
+Deadline = Near?  gain 0.210
+Lazy = Yes?  gain 0.210
+~~~
+
+The same numbers as the concept note: "Is there a party?" gains a full bit and wins.
+Notice that `gain` uses one `impurity` function for the parent *and* both children --
+pass `impurity=gini` and every number changes, but never by mixing the two.
+
+Finally, let scikit-learn do the search. One-hot encoding turns each (feature, value) pair
+into a 0/1 column, so every column is one yes/no question:
+
+```python
+from sklearn.tree import export_text
+
+X_toy = pd.get_dummies(toy[["Deadline", "Party", "Lazy"]])
+print(" ".join(X_toy.columns))
+toy_tree = DecisionTreeClassifier(criterion="entropy",
+                                  random_state=11)
+toy_tree.fit(X_toy, toy["Activity"])
+root = toy_tree.tree_.feature[0]
+print("root question:", X_toy.columns[root])
+print(f"root entropy:  {toy_tree.tree_.impurity[0]:.3f}")
+print(export_text(toy_tree,
+                  feature_names=list(X_toy.columns)))
+```
+
+~~~text
+Deadline_Near Deadline_None Deadline_Urgent Party_No Party_Yes Lazy_No Lazy_Yes
+root question: Party_No
+root entropy:  1.685
+|--- Party_No <= 0.50
+|   |--- class: Party
+|--- Party_No >  0.50
+|   |--- Deadline_None <= 0.50
+|   |   |--- Deadline_Near <= 0.50
+|   |   |   |--- class: Study
+|   |   |--- Deadline_Near >  0.50
+|   |   |   |--- Lazy_No <= 0.50
+|   |   |   |   |--- class: TV
+|   |   |   |--- Lazy_No >  0.50
+|   |   |   |   |--- class: Study
+|   |--- Deadline_None >  0.50
+|   |   |--- class: Pub
+~~~
+
+The first line lists the seven 0/1 columns. Deadline, with three values, became three
+columns; a two-valued feature became two mirror-image columns (`Party_No`, `Party_Yes`)
+that ask the same question, so the tree may use either one.
+
+scikit-learn's root entropy is your 1.685, and its root question is the party question.
+It happens to ask it as `Party_No <= 0.50` -- "is Party_No zero?", i.e. *is there a
+party?* -- and that branch is a pure Party leaf. On the other branch the next question is
+`Deadline_None`; Exercise 3 has you compute why. From here on scikit-learn runs this search
+for you, over 420 calls and eight numeric features.
+
+## Step 2: One Tree Overfits
 
 Grow a single decision tree with no depth limit -- it splits until its leaves are pure --
 and compare its training and test accuracy:
@@ -96,7 +237,7 @@ levels deep and memorized the training sample -- noise and all -- which is exact
 flails on frogs it has not seen. That yawning gap *is* the high variance of L09: this one
 model is far too sensitive to the precise sample it was handed.
 
-## Step 2: The Depth Dial -- completion problem
+## Step 3: The Depth Dial -- completion problem
 
 The first fix is to stop the tree growing so deep. `max_depth` is the same kind of
 **flexibility dial** as kNN's `k` or the SVM's `gamma`: too shallow underfits, too deep
@@ -142,7 +283,7 @@ most discriminating question -- starting from a Gini of 0.500 over all 420 train
 Follow the yes/no branches and you can read the model's reasoning aloud -- the readability no
 other model in this course offers.
 
-## Step 3: Bag Them, Grow a Forest
+## Step 4: Bag Them, Grow a Forest
 
 Instead of pruning one tree, grow *many* on bootstrap resamples and let them vote.
 `BaggingClassifier` does exactly that; `RandomForestClassifier` adds a random feature
@@ -171,7 +312,7 @@ overfit their own bootstrap samples, but they overfit *differently*, so the vote
 the noise and keeps the signal: variance reduction in action. The **OOB score** (0.819)
 is a validation estimate computed for free from the rows each tree never sampled.
 
-## Step 4: Which Features Matter
+## Step 5: Which Features Matter
 
 Every split records how much it cut impurity, so the forest can rank the features by how
 useful they were. Sort and print them:
@@ -252,8 +393,40 @@ a touch cheaper to compute. Spend your tuning effort on `max_depth` and `n_estim
 the criterion.
 </details>
 
+### Exercise 3 -- Gains One Level Down
+
+In Step 1 the tree's second question was `Deadline_None`, on the Party = No branch. Check
+that choice yourself: keep only the toy rows with `Party == "No"`, then use your `gain`
+function to score the four remaining questions on those rows. Which one wins, and by how
+much?
+
+**Hint:** filter with `toy[toy["Party"] == "No"]`, then loop over `questions[1:]` (the Party question is useless once every row says No) and print `gain(...)` for the filtered rows.
+
+```python
+# TODO: your code here
+```
+
+<details><summary>Expected Output</summary>
+
+~~~text
+Deadline = None?  gain 0.722
+Deadline = Urgent?  gain 0.420
+Deadline = Near?  gain 0.420
+Lazy = Yes?  gain 0.420
+~~~
+
+"Deadline = None?" wins clearly, 0.722 against a three-way tie at 0.420. Its "yes" side is
+the single Pub row, a pure leaf, which is exactly the `Deadline_None` split scikit-learn
+printed. Note that the gains are computed on the branch's own five rows: Lazy was worth
+only 0.210 at the root, but 0.420 here. Each node runs the search afresh on its own rows.
+</details>
+
 ## Summary
 
+- Entropy and Gini measure how mixed a group is (0 when pure, highest when even), and a
+  split's gain is the parent's impurity minus its children's size-weighted impurity, with
+  one criterion throughout. By hand, "Party = Yes?" gained 1.000 on the toy table, and
+  scikit-learn chose the same root.
 - A single unpruned tree memorized the training set (accuracy 1.000) yet scored only
   0.717 on the test set -- the textbook high-variance overfitter from L09.
 - `max_depth` is the flexibility dial: capping it lifted test accuracy to about 0.767, but
