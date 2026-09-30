@@ -8,6 +8,10 @@
      diagram. (Selectors are written class-wise here on purpose -- spelling the literal
      placeholder tag in this comment makes every grep for real diagrams match this file.)
 
+     Typeset algorithm blocks are opt-in: wrap the KaTeX display in `::: {.algorithm}`.
+     They are HTML text, not pictures, so the enlarged copy is scaled by FONT SIZE (KaTeX
+     sizes everything in em, so it stays sharp); plain equations are never clickable.
+
      Wired in _quarto.yml via `include-after-body`. Shared by all courses -- edit the
      copy in _design/ semantics (see _design/quarto_style_default.md, decision 0023)
      and re-copy, rather than diverging per course. -->
@@ -16,7 +20,8 @@
   figure img,
   div.cell-output-display svg,
   div.cell-output-display img,
-  .quarto-figure img {
+  .quarto-figure img,
+  div.algorithm {
     cursor: zoom-in;
   }
   /* Linked images (the Colab badge) must navigate, not zoom. */
@@ -42,6 +47,12 @@
     box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
     cursor: zoom-out;
   }
+  /* An enlarged algorithm card: no page margins, no scroll box of its own. */
+  .dgm-zoom-overlay > div.algorithm { color: #212529; }
+  .dgm-zoom-overlay > div.algorithm .katex-display {
+    margin: 0;
+    overflow: visible;
+  }
 </style>
 <script>
   (function () {
@@ -50,7 +61,8 @@
       "figure img",
       "div.cell-output-display svg",
       "div.cell-output-display img",
-      ".quarto-figure img"
+      ".quarto-figure img",
+      "div.algorithm"
     ].join(", ");
 
     // Viewport budget for the enlarged copy, leaving room for the card's padding.
@@ -81,6 +93,28 @@
       node.style.maxHeight = "none";
     }
 
+    // Enlarge a typeset (HTML) block by raising its font size. The block's own box is
+    // full-width, so measure the union of the direct children of `.katex-html` -- the ink
+    // actually drawn. (Their class name varies by KaTeX build -- `base` or `katex-base` --
+    // so select them structurally.) The 32px allowance is the card's 1rem padding per side.
+    function fitText(clone, node) {
+      var boxes = node.querySelectorAll(".katex-html > *");
+      if (!boxes.length) boxes = [node];
+      var l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+      Array.prototype.forEach.call(boxes, function (el) {
+        var q = el.getBoundingClientRect();
+        l = Math.min(l, q.left); t = Math.min(t, q.top);
+        r = Math.max(r, q.right); b = Math.max(b, q.bottom);
+      });
+      var w = r - l, h = b - t;
+      var availW = window.innerWidth * MAX_W - 32;
+      var availH = window.innerHeight * MAX_H - 32;
+      // Never shrink below the on-page size; a very tall block scrolls instead.
+      var scale = Math.max(Math.min(availW / w, availH / h), 1);
+      var base = parseFloat(getComputedStyle(node).fontSize);
+      clone.style.fontSize = base * scale + "px";
+    }
+
     function open(node) {
       var overlay = document.createElement("div");
       overlay.className = "dgm-zoom-overlay";
@@ -89,7 +123,9 @@
 
       var onPageW = node.getBoundingClientRect().width;
       var clone = node.cloneNode(true);
-      if (clone.tagName && clone.tagName.toLowerCase() === "svg") {
+      if (node.matches("div.algorithm")) {
+        fitText(clone, node);
+      } else if (clone.tagName && clone.tagName.toLowerCase() === "svg") {
         var box = (clone.getAttribute("viewBox") || "").split(/[\s,]+/);
         fit(clone, parseFloat(box[2]), parseFloat(box[3]), onPageW);
       } else {
