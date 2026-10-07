@@ -14,12 +14,13 @@ By the end of this lesson you will be able to:
 
 - **Describe** the multilayer-perceptron architecture (input to hidden to output) and **state**
   what universal approximation does and does not promise. *(Understand)*
-- **Build** an MLP in PyTorch with `nn.Sequential` (`nn.Linear` + `nn.ReLU`) and read its
-  structure and parameter count. *(Apply — in the lab)*
+- **Build** an MLP in PyTorch with `nn.Sequential` (`nn.Linear` + `nn.ReLU`), read its
+  structure, and **compute** its parameter count by hand. *(Apply)*
 - **Train** an MLP with the explicit four-step loop (forward, loss, backward, step) and
   **explain** each step, treating autograd as a black box. *(Apply / Understand)*
-- **Demonstrate** that a hidden layer learns a nonlinear boundary a linear model cannot, and that
-  a wider hidden layer approximates a function better. *(Apply / Analyze — in the lab)*
+- **Demonstrate** that a hidden layer learns a nonlinear boundary a linear model cannot,
+  **explain** what the hidden layer does to the data, and show that a wider hidden layer
+  approximates a function better. *(Apply / Analyze — in the lab)*
 
 > **Where this sits:** after `L14 — From Perceptrons to Neural Networks`, where we *hand-wired* a
 > two-layer network to solve XOR. This lesson **learns** the weights instead, with the course's
@@ -64,7 +65,10 @@ $$
 The **output layer** is picked to match the problem: **K logits** (then softmax) for K-class
 classification, or **one linear unit** for regression. The hidden layers are where the network
 builds its own useful features — exactly the "act on what the previous layer computed" idea from
-L14.
+L14. Put concretely: the hidden layer moves each point to new coordinates $\mathbf{h}$, and the
+output layer — on its own just a linear model — separates the classes *in those coordinates*. A
+problem no straight line can solve in the input space becomes one a flat cut solves in the hidden
+space; the lab's Step 4 shows this in 3-D.
 
 ```{mermaid}
 flowchart LR
@@ -119,6 +123,20 @@ scikit-learn). Two pieces are enough to start:
 
   That is the architecture diagram above, in code. The model is just a function: feed it inputs,
   it returns logits.
+
+**Counting parameters.** Every weight and bias is a *parameter* that training adjusts. A dense
+layer `nn.Linear(n_in, n_out)` gives each of its $n_\text{out}$ units one weight per input plus
+one bias, so it holds
+
+$$
+n_\text{in} \cdot n_\text{out} + n_\text{out} = (n_\text{in} + 1)\, n_\text{out}
+$$
+
+parameters, and a network's total is the sum over its dense layers (activations such as ReLU have
+none). The lab's classifier (2 inputs, 16 hidden units, 2 logits) has 48 parameters in the first
+layer, $(2+1)\cdot 16$, and 34 in the second, $(16+1)\cdot 2$: **82** in all. PyTorch stores each weight
+matrix as **[out, in]** — `nn.Linear(2, 16)` has a $16 \times 2$ weight, one row per unit — which
+is the shape of $\mathbf{W}_1$ in the equation above.
 
 ## The Training Loop
 
@@ -193,6 +211,8 @@ tools for deep nets are L17.
 | Deep network (DNN) | an MLP with a deep stack of hidden layers |
 | Universal approximation | one hidden layer, enough units, approximates any continuous function (existence, not a recipe) |
 | PyTorch model | `nn.Sequential(nn.Linear(...), nn.ReLU(), ...)` — a function from inputs to logits |
+| Parameter count | `(n_in+1)*n_out` per `nn.Linear(n_in, n_out)`; sum over the layers (2-16-2 = 82) |
+| Hidden layer's job | moves points to new coordinates where the linear output layer can separate them |
 | Training loop | `zero_grad` -> forward -> loss -> `backward()` -> `step`, each epoch |
 | `loss.backward()` | autograd computes every gradient (the black box; mechanism is L16) |
 | Logits + `CrossEntropyLoss` | emit raw logits; the loss applies softmax — never add your own |
