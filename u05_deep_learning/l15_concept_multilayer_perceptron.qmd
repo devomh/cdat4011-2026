@@ -166,6 +166,9 @@ reduce the loss — all 82 of them at once, automatically. We treat **`backward(
 in this lesson; opening it is exactly what L16 (Backpropagation & Autodiff) is for.
 
 ::: {.callout-note title="Logits, not probabilities"}
+A **logit** is one entry of the output $\hat{\mathbf{y}}$: a raw score, any real number, that
+softmax turns into a probability. Only the *gaps* between logits matter, and with two classes
+$\hat y_1 - \hat y_0 = \log(p_1/p_0)$ is exactly the log-odds that L04 called the logit.
 `nn.CrossEntropyLoss` expects **raw logits** — it applies the (log-)softmax internally. So the
 model's last layer outputs logits with **no** softmax attached; adding one would double-count and
 train worse. To read **probabilities** at inference time, apply `softmax` to the logits *then*,
