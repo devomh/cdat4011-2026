@@ -14,8 +14,9 @@ By the end of this lesson you will be able to:
 
 - **Explain** backpropagation as reverse-mode automatic differentiation applied to the loss -- one
   forward pass, one backward pass -- and why that mode fits a neural network. *(Understand)*
-- **Apply** the chain rule across a small **computational graph**, where each node pushes its
-  gradient to its inputs via the local derivative. *(Apply — in the lab)*
+- **Apply** the chain rule across a small **computational graph** by hand, node by node, where each
+  node pushes its gradient to its inputs via the local derivative and a node that feeds two places
+  sums what it receives. *(Apply)*
 - **Build** a scalar autograd engine and **verify** its gradients against PyTorch and a numerical
   check. *(Apply / Analyze — in the lab)*
 - **Explain** why gradients accumulate (hence `zero_grad`) and why one backward pass computes all
@@ -77,9 +78,10 @@ flowchart LR
 ```
 
 That is the graph for `L = (a*b + c)*f`. The forward pass fills in the values left to right; the
-backward pass seeds $\partial L/\partial L = 1$ at the right and flows gradients back to the left,
-landing on $\partial L/\partial a = 6$, $\partial L/\partial b = -4$, and so on -- which the lab
-confirms by hand, against PyTorch, and numerically.
+backward pass seeds $\partial L/\partial L = 1$ at the right and flows gradients back to the left.
+After the three moves below, we run that backward pass by hand, one node at a time. In the lab, the
+engine you build and PyTorch reproduce all four numbers, and a numerical check confirms
+$\partial L/\partial a$.
 
 ## Reverse-Mode in Three Moves
 
@@ -91,11 +93,141 @@ confirms by hand, against PyTorch, and numerically.
 3. **Backward sweep.** Seed $\partial L/\partial L = 1$, then walk the graph in reverse, each node
    adding its contribution into its inputs' grads via the local derivative.
 
+## One Backward Pass, by Hand
+
+Now run the three moves on `L = (a*b + c)*f`, every number written out. First give each
+intermediate a name, so every operation is one step, and list each operation's local derivatives:
+
+| Operation | Local derivative, 1st input | Local derivative, 2nd input |
+|---|---|---|
+| $e = ab$ | $\partial e/\partial a = b$ | $\partial e/\partial b = a$ |
+| $d = e + c$ | $\partial d/\partial e = 1$ | $\partial d/\partial c = 1$ |
+| $L = df$ | $\partial L/\partial d = f$ | $\partial L/\partial f = d$ |
+
+**Move 1, forward pass.** With $a = 2$, $b = -3$, $c = 10$, $f = -2$, left to right:
+
+$$
+\begin{aligned}
+e &= (2)(-3) = -6 \\
+d &= -6 + 10 = 4 \\
+L &= (4)(-2) = -8
+\end{aligned}
+$$
+
+**Moves 2 and 3, the backward sweep.** One reverse topological order is: $L$ first, then $f$ and
+$d$, then $c$ and $e$, then $a$ and $b$. (Any order works as long as every node comes before its
+inputs; the lab's engine may pick a different one.) Each gradient is the grad of the node that pushes it (the
+**upstream** grad) times the local derivative from the table above: $L$ pushes to $f$ and $d$, $d$
+pushes to $c$ and $e$, and $e$ pushes to $a$ and $b$. The table does every step twice, in symbols
+and in numbers:
+
+| Gradient | Upstream $\cdot$ local | Numbers |
+|---|---|---|
+| $\partial L/\partial L$ | seed $1$ | $1$ |
+| $\partial L/\partial f$ | $1\cdot d$ | ${(1)(4)=4}$ |
+| $\partial L/\partial d$ | $1\cdot f$ | ${(1)(-2)=-2}$ |
+| $\partial L/\partial c$ | $f\cdot 1$ | ${(-2)(1)=-2}$ |
+| $\partial L/\partial e$ | $f\cdot 1$ | ${(-2)(1)=-2}$ |
+| $\partial L/\partial a$ | $f\cdot b$ | ${(-2)(-3)=6}$ |
+| $\partial L/\partial b$ | $f\cdot a$ | ${(-2)(2)=-4}$ |
+
+Each value is a slope. $\partial L/\partial a = 6$ says that nudging $a$ up by a small $h$ moves $L$
+by about $6h$ -- which is exactly what the lab's numerical check measures (it finds 6.0000).
+
+**Check it symbolically.** Expand $L$ and differentiate each input directly:
+
+$$
+\begin{aligned}
+L &= (ab + c)f = abf + cf \\
+\partial L/\partial a &= bf = (-3)(-2) = 6 \\
+\partial L/\partial b &= af = (2)(-2) = -4 \\
+\partial L/\partial c &= f = -2 \\
+\partial L/\partial f &= ab + c = 4
+\end{aligned}
+$$
+
+The same four answers. What the sweep adds is **reuse**: $\partial L/\partial e = f$ was computed
+once, and then $a$ and $b$ each multiplied it by one local derivative. Running the chain rule
+separately for each input would compute the shared factor
+$(\partial L/\partial d)(\partial d/\partial e)$ twice, once inside
+$(\partial L/\partial d)(\partial d/\partial e)(\partial e/\partial a)$ and again for $b$; the sweep
+computes it once, as $\partial L/\partial e$. In a network with millions of weights, that sharing is
+what makes one backward pass enough.
+
+Here is the graph after the backward pass, each node with its value and its grad:
+
+```{mermaid}
+flowchart LR
+  a["a = 2<br/>grad 6"] --> e["e = -6<br/>grad -2"]
+  b["b = -3<br/>grad -4"] --> e
+  e --> d["d = 4<br/>grad -2"]
+  c["c = 10<br/>grad -2"] --> d
+  d --> L["L = -8<br/>grad 1"]
+  f["f = -2<br/>grad 4"] --> L
+```
+
+The values were filled left to right by the forward pass; the grads were filled right to left by the
+backward pass. The arrows still point the way the values flowed.
+
+### When a Node Feeds Two Places
+
+In that graph every value is used once, so every node receives exactly one push. Now take
+`L = x*y + x` with $x = 2$ and $y = -3$, where $x$ feeds both the product and the sum:
+
+```{mermaid}
+flowchart LR
+  x["x = 2"] --> p["p = x*y = -6"]
+  y["y = -3"] --> p
+  p --> L["L = p + x = -4"]
+  x --> L
+```
+
+Seed $\partial L/\partial L = 1$. The sum passes that 1 to both of its inputs: $\partial L/\partial p = 1$,
+and $x$ receives its first push, $1 \cdot 1 = 1$. The product then pushes $(1)(-3) = -3$ into $x$
+and $(1)(2) = 2$ into $y$. So $x$ has received two pushes, and its gradient is their sum:
+
+$$\frac{\partial L}{\partial x} = \underbrace{-3}_{\text{via } p} + \underbrace{1}_{\text{direct}} = -2$$
+
+Symbolically, $\partial(xy + x)/\partial x = y + 1 = -2$: the same answer. If the engine wrote
+`=` instead of `+=`, $x$ would keep only the last push it received -- the product's -3, since the
+sum is swept first -- and its gradient would be wrong. The lab runs this exact graph through the engine.
+
 ::: {.callout-important title="Gradients accumulate"}
 Every gradient push uses `+=`, not `=`. If a node feeds into several places, its gradient is the
-**sum** of the contributions from each path (the multivariable chain rule). That is also why a
+**sum** of the contributions from each path (the multivariable chain rule), as $x$ showed above
+(-3 + 1 = -2). That is also why a
 training loop must call `zero_grad()` every step: otherwise this step's gradients pile on top of last
 step's. The `optimizer.zero_grad()` from L15 is exactly this reset.
+:::
+
+**Try it.** Take `L = (x + y)*x` with $x = 3$ and $y = -1$. Name the sum $s = x + y$, do the forward
+pass, then the backward sweep, and find $\partial L/\partial x$ and $\partial L/\partial y$ before
+opening the answer. Which node feeds two places?
+
+::: {.callout-tip collapse="true" title="Answer"}
+Forward: $s = 2$, then $L = 6$. Backward, starting from the product $L = s\cdot x$, then the sum:
+
+$$
+\begin{aligned}
+\partial L/\partial s &= x = 3 \\
+x\text{'s push from the product} &= s = 2 \\
+x\text{'s push from the sum} &= 3 \cdot 1 = 3 \\
+\partial L/\partial x &= 2 + 3 = 5 \\
+\partial L/\partial y &= 3 \cdot 1 = 3
+\end{aligned}
+$$
+
+$x$ feeds two places (the sum and the product), so its two pushes add. Check by expanding:
+
+$$
+\begin{aligned}
+L &= x^2 + xy \\
+\partial L/\partial x &= 2x + y = 5 \\
+\partial L/\partial y &= x = 3
+\end{aligned}
+$$
+
+You can confirm both with the lab's engine.
 :::
 
 ## Backprop = Reverse-Mode Autodiff on the Loss
@@ -129,7 +261,9 @@ and read each input's `.grad`. (You can also get gradients without populating `.
 ## Common Pitfalls
 
 - **Forgetting gradients accumulate.** Without `zero_grad()` each step, gradients from previous steps
-  pile up and training goes haywire. The `+=` in the engine is the reason.
+  pile up and training goes haywire. The `+=` in the engine is the reason. By hand, the same slip
+  looks different: following only one path out of a node that feeds two places (for `x*y + x`,
+  answering -3 or 1 instead of -2).
 - **Confusing numerical with autodiff.** Finite differences are a great *check*, but they need a
   forward pass per parameter and lose precision -- useless for training. Backprop is exact and cheap.
 - **Thinking backprop is neural-network-specific.** It is general reverse-mode autodiff; it
@@ -141,7 +275,8 @@ and read each input's `.grad`. (You can also get gradients without populating `.
 
 **"Is backprop just the chain rule?"** -- Essentially yes, plus the bookkeeping that makes it
 efficient: storing each intermediate value, knowing each operation's local derivative, and sweeping
-the graph once in reverse topological order so no gradient is computed twice. The insight is not the
+the graph once in reverse topological order so no gradient is computed twice (in the by-hand example,
+$\partial L/\partial e$ is found once and shared by $a$ and $b$). The insight is not the
 calculus; it is the *one backward pass* organization.
 
 **"Why not just use numerical gradients?"** -- They are simple and great for *checking* a gradient,
@@ -163,7 +298,8 @@ graph a second time" errors. The black box becomes debuggable.
 | Computational graph | the DAG of operations; each node remembers how it was made |
 | Local derivative | each operation's own derivative (for `a*b`: `b` and `a`) |
 | Reverse topological order | process nodes so each grad is complete before it pushes |
-| Gradients accumulate | `+=` where a node fans out -- hence `zero_grad()` each step |
+| Backward pass by hand | seed 1 at `L`; each grad = upstream grad times local derivative; `(a*b+c)*f` gives 6, -4, -2, 4 |
+| Gradients accumulate | `+=` where a node fans out (`x*y+x`: -3 + 1 = -2) -- hence `zero_grad()` each step |
 | Cost | one backward sweep gets all parameter gradients; its work is comparable to a forward pass and scales with the graph |
 | PyTorch autograd | the same engine, vectorized over tensors -- `requires_grad`, `.backward()`, `.grad` |
 

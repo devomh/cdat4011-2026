@@ -157,8 +157,10 @@ so each node's gradient is complete before it pushes to its inputs.
 
 ## Step 2: Verify It
 
-Take `L = (a*b + c) * f` with `a=2, b=-3, c=10, f=-2`. By hand `L = (-6+10)*-2 = -8`, and e.g.
-`dL/da = f*b = (-2)(-3) = 6`. Run the engine and read off every gradient at once:
+Take `L = (a*b + c) * f` with `a=2, b=-3, c=10, f=-2`. The concept page works this graph by hand,
+node by node ("One Backward Pass, by Hand"): `L = -8`, and `dL/da, dL/db, dL/dc, dL/df` are
+`6, -4, -2, 4` (for example `dL/da = f*b = (-2)(-3) = 6`). Run the engine and check that it reads
+off the same four numbers at once:
 
 ```python
 a = Value(2.0); b = Value(-3.0); c = Value(10.0); f = Value(-2.0)
@@ -187,7 +189,26 @@ print(f"torch: dL/da={at.grad.item()}  dL/db={bt.grad.item()}  dL/dc={ct.grad.it
 torch: dL/da=6.0  dL/db=-4.0  dL/dc=-2.0  dL/df=4.0
 ~~~
 
-Identical. Now a single neuron -- `n = x1*w1 + x2*w2 + b`, then `tanh` (the bias is chosen so the
+Identical. Next, a node that feeds two places. In `L = x*y + x` (the concept page's second
+example), `x` goes into both the product and the sum, so it should receive two pushes, -3 through
+the product and 1 directly, which add to `y + 1 = -2`:
+
+```python
+x = Value(2.0); y = Value(-3.0)
+L = x*y + x
+L.backward()
+print(f"L = {L.data}   dL/dx = {x.grad}   dL/dy = {y.grad}")
+```
+
+~~~text
+L = -4.0   dL/dx = -2.0   dL/dy = 2.0
+~~~
+
+`dL/dx = -2.0`: the two `+=` pushes added up. With `=` in place of `+=`, the second push would
+overwrite the first. The sum pushes first (it is later in the graph), so `x.grad` would come out
+as -3.0, the product's push alone.
+
+Now a single neuron -- `n = x1*w1 + x2*w2 + b`, then `tanh` (the bias is chosen so the
 gradients land on round numbers):
 
 ```python
@@ -393,8 +414,8 @@ run backward through the whole network, is exactly right. This is how autograd e
 
 - A `Value` records each operation and a `_backward` closure (its **local derivative**); `backward()`
   topologically sorts the graph, seeds `dL/dL = 1`, and sweeps in reverse. That is all of backprop.
-- Gradients **accumulate** (`+=`) where a node fans out -- which is why a training loop calls
-  `zero_grad()` every step.
+- Gradients **accumulate** (`+=`) where a node fans out -- in `x*y + x`, `x` got -3 + 1 = -2 --
+  which is why a training loop calls `zero_grad()` every step.
 - The engine matched the chain rule by hand, **PyTorch autograd to the last digit** (6 / -4 / -2 / 4),
   and a numerical check (6.0000); and it trained a 65-parameter MLP to 97% on two-moons.
 - `loss.backward()` from L15 is exactly this engine, vectorized over tensors and written in C++/CUDA.
