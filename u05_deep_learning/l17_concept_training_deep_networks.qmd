@@ -20,6 +20,9 @@ By the end of this lesson you will be able to:
   what each adds to the plain gradient step. *(Understand / Analyze)*
 - **Use** dropout and batch normalization as training aids, and **state** what each does and how
   `train()` vs `eval()` mode differs. *(Apply / Understand)*
+- **Compare** a trained deep MLP with classic baselines (logistic regression, random forest, RBF SVM)
+  on real data, and **explain** why depth alone does not win on flattened pixels.
+  *(Analyze -- in the lab)*
 
 > **Where this sits:** after `L16 — Backpropagation & Autodiff`, where we built the engine that
 > computes every gradient. We can now build a net of *any depth* -- this lesson is about making one of
@@ -33,8 +36,8 @@ By the end of this lesson you will be able to:
 
 Deep networks existed for decades before they worked. The reason they were "mostly abandoned in the
 early 2000s" was not a shortage of compute or data alone -- it was that **nobody could train them**.
-Stack enough layers and the gradients dissolve on the way down, so the lower layers never move; or
-they blow up, and the loss diverges to `NaN`. What rescued deep learning was not one idea but a
+Stack enough layers and the gradients dissolve on the way down, so the lower layers (the ones nearest
+the input) never move; or they blow up, and the loss diverges to `NaN`. What rescued deep learning was not one idea but a
 **toolkit** of small, sharp fixes, each repairing one failure mode.
 
 The picture to hold: a deep net is a **bucket brigade** passing the error signal hand-to-hand from the
@@ -54,13 +57,18 @@ product blows up -- the **exploding-gradients** problem, which shows up most in 
 in divergence. The umbrella name is **unstable gradients**: different layers learn at wildly different
 speeds.
 
+By convention a network is drawn with the input at the bottom and the loss at the top, so the backward
+pass runs *down*. That is why the layers nearest the input are called the "lower" layers. (The diagram
+below lays the same net on its side: input on the left, loss on the right, with the gradient flowing
+right to left.)
+
 ```{mermaid}
 flowchart RL
   L["loss<br/>grad = 1"] --> o["output layer<br/>grad healthy"]
   o --> h3["hidden 3<br/>x 0.3"]
   h3 --> h2["hidden 2<br/>x 0.3"]
-  h2 --> h1["hidden 1<br/>grad ~ 0 (vanished)"]
-  h1 --> i["input layer<br/>never learns"]
+  h2 --> h1["hidden 1<br/>grad ~ 0 (vanished)<br/>barely learns"]
+  h1 --> i["input x<br/>(no weights)"]
 ```
 
 The classic 2010 culprit (Glorot and Bengio): the **sigmoid** activation paired with the then-standard
@@ -102,6 +110,39 @@ it never recovers. The refinements all address this:
 - **GELU / Swish / Mish** -- smooth, curved everywhere; the default in modern transformers, at a
   little extra compute.
 
+![Three ways to refine ReLU (grey dashed), each over its own panel. Left: a small negative slope keeps the unit alive (drawn at 0.1 so it is visible; PyTorch's default is 0.01). Middle: smooth curves that level off below zero. Right: smooth gates that dip slightly below zero before rising; Swish and Mish nearly coincide.](../assets/l17_activations.png){#fig-activations fig-alt="Three side-by-side plots of activation value against z from -4 to 3, each with ReLU drawn as a grey dashed line that is flat at zero for negative z and rises with slope 1 for positive z. Left panel, Leaky ReLU with slope 0.1: identical to ReLU for positive z, a shallow straight line down to -0.4 at z = -4. Middle panel, ELU and SELU: both follow ReLU for positive z (SELU slightly steeper) and bend smoothly below zero, ELU levelling off near -1 and SELU near -1.7. Right panel, GELU, Swish and Mish: smooth curves just below ReLU for positive z that dip slightly below zero for negative z, to about -0.17 for GELU and about -0.3 for Swish and Mish, then return toward zero; the Swish and Mish curves almost overlap."}
+
+::: {.callout-note title="Deep Dive: the activation formulas (Optional)" collapse="true"}
+**Leaky ReLU / PReLU** -- a small slope $\alpha$ on the negative side; Leaky ReLU fixes it (PyTorch
+default $\alpha = 0.01$), PReLU *learns* it:
+
+$$
+f(z) = \begin{cases} z & z > 0 \\ \alpha z & z \le 0 \end{cases}
+$$
+
+**ELU / SELU** -- an exponential curve that levels off at $-\alpha$ instead of a hard zero:
+
+$$
+\text{ELU}(z) = \begin{cases} z & z > 0 \\ \alpha\,(e^{z} - 1) & z \le 0 \end{cases}
+$$
+
+SELU is a scaled ELU, $\text{SELU}(z) = \lambda\,\text{ELU}_\alpha(z)$ with the fixed constants
+$\lambda \approx 1.0507$ and $\alpha \approx 1.6733$, chosen so a deep MLP keeps its activations near
+mean 0 and variance 1 on its own.
+
+**GELU / Swish / Mish** -- the input times a smooth "gate" between 0 and 1:
+
+$$
+\begin{aligned}
+\text{GELU}(z) &= z\,\Phi(z) \\
+\text{Swish}(z) &= z\,\sigma(z) \\
+\text{Mish}(z) &= z\,\tanh\!\big(\ln(1 + e^{z})\big)
+\end{aligned}
+$$
+
+where $\Phi$ is the standard normal CDF and $\sigma$ the sigmoid (PyTorch calls Swish `SiLU`).
+:::
+
 Practical rule: **start with ReLU** (paired with He init); reach for a variant only when it pays.
 
 ## Cure 3 -- Batch Normalization
@@ -110,9 +151,15 @@ Practical rule: **start with ReLU** (paired with He init); reach for a variant o
 that **normalizes each feature across the mini-batch** to zero mean and unit variance, then applies a
 **learnable scale and shift** (gamma, beta) so the network can undo the normalization if it helps.
 Keeping activations well-conditioned at every depth stabilizes training, permits **higher learning
-rates**, and mildly regularizes. One catch you must respect: BatchNorm uses the **current batch's
-statistics during `train()`** but **running averages during `eval()`** -- so the mode you put the model
-in matters at inference time.
+rates**, and mildly **regularizes** (reduces overfitting, as in L10): each example is normalized with
+its own batch's statistics, which shift from batch to batch and act as a little training noise.
+
+**`model.train()` and `model.eval()`** are methods every PyTorch model inherits from `nn.Module`; they
+compute nothing, they only set the model's **mode** (the `model.training` flag, passed down to every
+layer), and the few layers that check it change their behavior. One catch you must respect: BatchNorm
+uses the **current batch's statistics during `train()`** but **running averages during `eval()`** --
+so the mode you put the model in matters at inference time: in `train()` a test example's output would
+depend on which other examples happen to share its batch.
 
 ## Cure 4 -- Better Optimizers
 
@@ -172,7 +219,8 @@ memorizing the training set.
 - **Reaching for exotic activations or stacking every trick blindly.** ReLU + He + Adam already train
   most nets; add BatchNorm or dropout when a real problem (instability, overfitting) calls for it.
 - **"Deeper is always better."** Without these tricks, deeper is often *worse* -- the whole reason this
-  lesson exists.
+  lesson exists. And even with them, depth is no guarantee: on MNIST's flattened pixels the lab's
+  2-layer MLP (test `0.962`) beats its fully treated 8-layer one (`0.948`).
 
 ## FAQ / Industry Reality
 
@@ -192,6 +240,14 @@ agonize -- profile, then decide.
 watch the loss curve, exactly as the lab's Ex1 does; pick the largest rate that trains stably, then add
 a decay schedule. The deeper, automated version of this tuning is the CDAT 4013 lab's territory.
 
+**"Does a well-trained deep net beat classic ML?"** -- Not automatically. In the lab's MNIST step, with
+each image flattened into 784 pixel columns and a 10,000-image training subset, the toolkit takes an
+8-layer MLP from chance to test about `0.95` -- yet a random forest reaches `0.952` and an RBF SVM
+`0.964`, both with no tuning. Flattening throws away which pixel sat next to which, so on that subset
+the net has no structural advantage to exploit. Always fit a
+classic baseline first. Deep learning pulls ahead when the architecture matches the data's structure --
+for images, the convolutional networks of L18.
+
 ## Summary / Cheat-sheet
 
 | Problem / tool | The one-liner |
@@ -205,6 +261,7 @@ a decay schedule. The deeper, automated version of this tuning is the CDAT 4013 
 | Adam | per-parameter adaptive step sizes (momentum + RMSProp); the robust default |
 | Learning rate | the master dial: too high diverges, too low crawls; decay it on a schedule |
 | Dropout | randomly zero a fraction of activations each step -> regularizes; off at eval |
+| Real data (MNIST) | the toolkit makes depth trainable, not better: fit a classic baseline first |
 
 ## Where to Go Deeper
 
