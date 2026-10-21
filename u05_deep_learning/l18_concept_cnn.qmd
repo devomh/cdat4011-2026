@@ -13,11 +13,13 @@ duration: "90 mins"
 By the end of this lesson you will be able to:
 
 - **Explain** what a convolutional layer does -- a small filter slid over local receptive fields with
-  shared weights -- and why that gives parameter sharing and translation invariance. *(Understand)*
-- **Compute and read** a convolution (a kernel applied over each patch produces a feature map) and
-  **describe** what pooling does. *(Apply / Understand -- in the lab)*
-- **Build** a CNN in PyTorch (`nn.Conv2d` + `nn.MaxPool2d` + `nn.Linear`) and **trace** the spatial
-  dimensions through it (28 -> 14 -> 7). *(Apply -- in the lab)*
+  shared weights -- and why that gives parameter sharing and lets a pattern be detected anywhere in
+  the image. *(Understand)*
+- **Compute and read** a convolution (a kernel applied over each patch produces a feature map),
+  **compute** a layer's output size from its padding and stride, and **describe** what pooling does.
+  *(Apply / Understand -- in the lab)*
+- **Build** a CNN in PyTorch (`nn.Conv2d` + `nn.MaxPool2d` + `nn.Linear`), **trace** the spatial
+  dimensions through it (28 -> 14 -> 7) and **count** its parameters. *(Apply -- in the lab)*
 - **Demonstrate** that a CNN beats a plain MLP on images and **explain** why. *(Apply / Analyze)*
 
 > **Where this sits:** after `L17 — Training Deep Networks`, which made deep nets trainable. This is
@@ -46,7 +48,7 @@ on handwritten digits, is what makes deep learning work on images.
 
 The L15 MLP flattens an image to a vector and wires every pixel to every hidden unit. Two costs
 follow. First, **parameters explode**: a dense layer from 784 pixels to 784 units already has over
-600,000 weights, and real images are far larger. Second, there is **no translation invariance**: a
+600,000 weights, and real images are far larger. Second, nothing carries over between positions: a
 weight that learned "edge here, top-left" knows nothing about the same edge bottom-right -- the MLP
 must relearn every pattern at every position. Convolution removes both costs at once.
 
@@ -59,12 +61,102 @@ it covers and sum -- that is the **convolution operation** -- producing one numb
 over every position and the numbers form a **feature map**: a picture of *where in the image that
 filter's pattern fires*.
 
-Two knobs set the output size: the **stride** (how far the filter steps each move) and **zero-padding**
-(adding a border of zeros so the output can keep the input's height and width). The decisive property
-is **parameter sharing**: the *same* filter weights are used at every position. So a 3x3 filter is
-just nine weights (plus a bias), no matter how large the image -- and whatever pattern it learns is
-detected **anywhere** it appears. That is **translation invariance**, and it is exactly what an MLP
-lacks.
+Written out, a $k \times k$ kernel $K$ with bias $b$, applied to an input $X$ (after any
+zero-padding, described below), gives the output at row $i$, column $j$, with all indices counted
+from 0:
+
+$$
+Y[i,j] = b + \sum_{u=0}^{k-1} \sum_{v=0}^{k-1} K[u,v]\, X[i+u,\; j+v]
+$$
+
+The double sum *is* "multiply the kernel by the patch whose top-left corner is $(i, j)$, and add
+everything up". The section below works one output by hand.
+
+::: {.callout-note}
+## Convolution or cross-correlation?
+
+Strictly, mathematics calls the formula above a **cross-correlation**: a true convolution flips the
+kernel before sliding it. Deep-learning libraries, PyTorch's `nn.Conv2d` and `F.conv2d` included,
+compute exactly the formula above and call it convolution. Since the kernel is *learned*, the flip
+makes no difference to what a network can do -- it would just learn the flipped kernel.
+:::
+
+**Stride and padding.** Two knobs set the output size: the **stride** $s$ (how far the filter steps
+each move) and **zero-padding** $p$ (a border of zeros added around the input). For an $n \times n$
+input and a $k \times k$ kernel, each side of the output is
+
+$$
+n_{\text{out}} = \left\lfloor \frac{n + 2p - k}{s} \right\rfloor + 1
+$$
+
+Three cases cover this lesson. A 3x3 kernel with $p = 1$, $s = 1$ keeps the size:
+$(28 + 2 - 3)/1 + 1 = 28$. The same kernel without padding shrinks it by two: $(28 - 3)/1 + 1 = 26$.
+A 2x2 window with stride 2 halves it: $\lfloor (28 - 2)/2 \rfloor + 1 = 14$.
+
+**Parameter sharing.** The decisive property is that the *same* filter weights are used at every
+position. So a 3x3 filter is just nine weights (plus a bias), no matter how large the image -- and
+whatever pattern it learns is detected **anywhere** it appears. Precisely, convolution is
+translation-**equivariant**: shift the input and the feature map shifts with it, by the same amount.
+The pattern is found wherever it is, and the map records *where*. Pooling (below) then makes the
+output partly **invariant** -- small shifts barely change it. Together these are what the field
+loosely calls **translation invariance**, and it is exactly what an MLP lacks.
+
+## How Kernels React to Features
+
+A worked example makes the formula concrete. Take a 6x6 image that is dark (0) on the left and
+bright (1) on the right -- a single **vertical edge** -- and a **vertical-edge kernel** that
+subtracts the left column of each patch from the right one. With no padding and stride 1, the output is 4x4:
+
+$$
+\begin{bmatrix}
+0&\color{#1f6fb4}0&\color{#1f6fb4}0&\color{#1f6fb4}1&1&1\\
+0&\color{#1f6fb4}0&\color{#1f6fb4}0&\color{#1f6fb4}1&1&1\\
+0&\color{#1f6fb4}0&\color{#1f6fb4}0&\color{#1f6fb4}1&1&1\\
+0&0&0&1&1&1\\
+0&0&0&1&1&1\\
+0&0&0&1&1&1
+\end{bmatrix}
+\ast
+\begin{bmatrix}
+-1&0&1\\
+-1&0&1\\
+-1&0&1
+\end{bmatrix}
+=
+\begin{bmatrix}
+0&\color{#1f6fb4}3&3&0\\
+0&3&3&0\\
+0&3&3&0\\
+0&3&3&0
+\end{bmatrix}
+$$
+
+The highlighted patch (rows 0-2, columns 1-3) produces the highlighted output $Y[0,1]$; the bias is 0
+here:
+
+$$
+\begin{aligned}
+Y[0,1] &= \textstyle\sum_{u,v} K[u,v]\, X[u,\; 1+v] \\
+&= 3 \times \big((-1)(0) + (0)(0) + (1)(1)\big) \\
+&= 3
+\end{aligned}
+$$
+
+The kernel answers **3** wherever its window straddles the edge and **0** wherever the window sees a
+flat region (all dark or all bright), because there the left and right columns cancel. Now try every
+combination of two kernels (the vertical-edge kernel and its transpose, a **horizontal-edge** kernel)
+and three images:
+
+| Kernel | Vertical-edge image | Horizontal-edge image | Flat image |
+|---|---|---|---|
+| vertical-edge | two columns of 3s along the edge | all 0 | all 0 |
+| horizontal-edge | all 0 | two rows of 3s along the edge | all 0 |
+
+Each kernel responds to **its own pattern only** and is silent on everything else -- that is what
+"a filter is a pattern detector" means. One more detail shows why a layer needs *many* filters: flip
+the image so it is bright on the left and dark on the right, and the same kernel answers **-3**
+instead of 3. After the ReLU that follows every convolution, a negative response becomes 0, so this
+filter now misses the edge entirely; detecting bright-to-dark edges takes a second filter.
 
 ## Channels and Stacking
 
@@ -72,16 +164,52 @@ Images have **channels** -- depth: 1 for grayscale, 3 for RGB. A filter always s
 channels (a 3x3 filter on an RGB image is really 3x3x3 weights). A single filter detects a single
 pattern, so a convolutional layer holds **many** filters, each producing its own feature map. The
 layer's output is therefore a stack of feature maps -- its own depth, fed as the channels of the next
-layer. Early layers learn low-level patterns (edges, blobs); later layers combine them into a
-**feature hierarchy** -- parts, then whole objects.
+layer. With $C_{\text{in}}$ input channels and stride $s$, output channel $c$ is
+
+$$
+Y_c[i,j] = b_c + \sum_{c'=0}^{C_{\text{in}}-1} \sum_{u,v} K_{c,c'}[u,v]\, X_{c'}[si+u,\; sj+v]
+$$
+
+Each output channel has its own kernel stack $K_{c,\cdot}$ and bias $b_c$, so a layer with
+$C_{\text{out}}$ filters of size $k \times k$ has
+
+$$
+(C_{\text{in}}\, k^2 + 1)\, C_{\text{out}} \text{ parameters}
+$$
+
+The image size appears nowhere in that count -- parameter sharing again. The lab's first layer
+(1 channel in, 32 filters of 3x3) has $(1 \cdot 9 + 1) \cdot 32 = 320$; its second (32 in, 64 out)
+has $(32 \cdot 9 + 1) \cdot 64 = 18{,}496$. Early layers learn low-level patterns (edges, blobs);
+later layers combine them into a **feature hierarchy** -- parts, then whole objects.
 
 ## Pooling
 
-A **pooling layer** subsamples each feature map over small windows -- typically taking the **max** in
-each 2x2 window (**max pooling**; **average pooling** takes the mean). Pooling has **no weights**; it
-just shrinks the height and width (**subsampling**), which cuts compute and memory and adds a little
-more translation invariance (the exact position of a feature matters less). A common block is
-therefore `Conv -> ReLU -> Pool`, repeated to build depth while shrinking the spatial size.
+A **pooling layer** subsamples each feature map over small windows. **Max pooling** with an
+$m \times m$ window and stride $m$ keeps the largest value in each window:
+
+$$
+P[i,j] = \max_{0 \le u,\, v < m} A[mi+u,\; mj+v]
+$$
+
+**Average pooling** keeps the mean instead, $\frac{1}{m^2}\sum_{u,v} A[mi+u,\; mj+v]$. Here $A$ is the
+activated feature map, $A = \max(0, Y)$ element by element: the ReLU sits between the convolution
+and the pooling. Pooling has **no weights**; it just shrinks the height and width (**subsampling**),
+which cuts compute and memory. With $m = 2$ each side halves -- 28 to 14 to 7 in the lab.
+
+Pooling also adds the partial **invariance** mentioned above. Slide the toy example's edge one column
+at a time and read the first row of the vertical-edge map, then its 2x2 max-pooled version:
+
+| Edge starts at column | Feature map, first row | After 2x2 max pooling |
+|---|---|---|
+| 2 | `[3, 3, 0, 0]` | `[3, 0]` |
+| 3 | `[0, 3, 3, 0]` | `[3, 3]` |
+| 4 | `[0, 0, 3, 3]` | `[0, 3]` |
+
+The feature map moves **with** the edge, one column per shift: equivariance. The pooled row changes
+less -- the left window still reports 3 after the first shift, because the move happened inside it --
+but it is not fully invariant: when the response crosses a window boundary, the pooled output changes
+too. Pooling forgives small shifts, not large ones. A common block is therefore
+`Conv -> ReLU -> Pool`, repeated to build depth while shrinking the spatial size.
 
 ## A CNN, End to End
 
@@ -92,22 +220,20 @@ output as L15, paired with `CrossEntropyLoss`. The filters are not designed by h
 The only new bookkeeping is the **spatial trace** -- watch the size shrink so you know the flattened
 dimension:
 
-```{mermaid}
-flowchart LR
-  inp["input<br/>1 x 28 x 28"] --> c1["Conv 3x3 x32<br/>+ ReLU"]
-  c1 --> p1["MaxPool 2<br/>32 x 14 x 14"]
-  p1 --> c2["Conv 3x3 x64<br/>+ ReLU"]
-  c2 --> p2["MaxPool 2<br/>64 x 7 x 7"]
-  p2 --> fl["Flatten<br/>3136"]
-  fl --> d1["Dense 128<br/>+ ReLU"]
-  d1 --> out["Dense 10<br/>logits"]
-```
+![The lab's CNN as a block diagram. Each box is one layer's output: blue for a convolution with ReLU, red for max pooling, green for the flatten and dense layers, purple for the output logits. Heights follow the spatial size (28, 14, 7); widths grow with the channel count but are not to scale.](../assets/l18_cnn_architecture.svg){#fig-cnn-architecture fig-alt="A 3-D block diagram of the lab's CNN, left to right. A 28 by 28 grayscale ankle-boot image (1 x 28 x 28) feeds Conv 1, a tall blue block labelled 32 x 28 x 28; then Pool 1, a red block half as tall, 32 x 14 x 14; Conv 2, blue, 64 x 14 x 14; Pool 2, red, 64 x 7 x 7; then thin green bars for Flatten (3136) and Dense (128), and a small purple box for the Output (10 logits). A legend at the bottom right names the four colors."}
+
+Read it left to right. The convolutions keep the height and width (padding 1) while adding channels
+(1 -> 32 -> 64); each pooling halves the height and width (28 -> 14 -> 7). By the end, the
+64 x 7 x 7 = 3136 numbers that reach `Flatten` describe *which* patterns were found *roughly where*,
+not raw pixels -- and only then do dense layers do the classifying.
 
 The lab builds exactly this network. Its two convolutional layers hold only **320** and **18,496**
-weights -- a few hundred to a few thousand, because the filters are shared -- while the dense head
-holds most of the rest. Trained on Fashion-MNIST it reaches **0.889** test accuracy, beating the
-L15-style MLP's **0.860** on the same images: the CNN wins because convolution and pooling exploit the
-2-D structure and translation invariance an MLP throws away.
+weights; the first dense layer holds 401,536 of the network's 421,642 parameters. Trained for 5
+epochs on Fashion-MNIST it reaches about **0.91** test accuracy, against about **0.88** for the
+L15-style MLP on the same images. Because this CNN has more parameters than that MLP, the lab also
+checks that the win is not just size: an MLP widened to the CNN's parameter count barely improves
+(about 0.88), while a slimmed CNN with *half* the MLP's parameters still reaches about 0.90. The CNN
+wins because convolution and pooling exploit the 2-D structure an MLP throws away.
 
 ## Common Pitfalls
 
@@ -116,24 +242,29 @@ L15-style MLP's **0.860** on the same images: the CNN wins because convolution a
 - **Forgetting the tensor layout.** PyTorch images are **NCHW** (batch, channels, height, width); a
   `Conv2d` expects a 4-D tensor, not a flat vector.
 - **The wrong flattened dimension.** The first dense layer's input size must match the flattened
-  feature maps (here 64 x 7 x 7 = 3136). Trace the spatial size, or let `nn.LazyLinear` infer it.
+  feature maps (here 64 x 7 x 7 = 3136). Trace the spatial size with the output-size formula, or let
+  `nn.LazyLinear` infer it.
 - **Thinking pooling "learns."** Pooling has **no weights** -- it only subsamples. All the learning is
   in the convolutional and dense layers.
+- **Reading a CNN's win as "it just has more weights."** Compare at matched size before concluding
+  anything; in the lab, a CNN with fewer parameters than the MLP still wins.
 - **Expecting a CNN to need *more* data than an MLP.** Parameter sharing means it needs *less* per
   pattern -- it sees the same pattern everywhere with one filter.
 
 ## FAQ / Industry Reality
 
-**"Why does a CNN beat an MLP on images?"** -- Two reasons: it keeps the 2-D structure (neighboring
-pixels stay neighbors), and parameter sharing lets one filter detect a pattern anywhere, so it
-generalizes from far less data than a dense net that must relearn every position.
+**"Why does a CNN beat an MLP on images?"** -- It keeps the 2-D structure (neighboring pixels stay
+neighbors), and parameter sharing lets one filter detect a pattern anywhere, so it generalizes from
+far less data than a dense net that must relearn every position. It is not a matter of size: in the
+lab an MLP given as many weights as the CNN gains almost nothing, and a CNN with fewer weights than
+the MLP still wins.
 
 **"How big should a filter be?"** -- Small (3x3 is the modern default); stacking several small filters
 sees a large region while using fewer weights than one big filter. The lab uses 3x3.
 
 **"Conv or pooling for downsampling?"** -- Pooling is the classic way (cheap, no parameters); many
-modern nets instead use a strided convolution. Either shrinks the spatial size; the lab uses max
-pooling for clarity.
+modern nets instead use a strided convolution (the output-size formula with $s = 2$). Either shrinks
+the spatial size; the lab uses max pooling for clarity.
 
 **"Where do real architectures go from here?"** -- Deeper stacks with clever wiring -- residual
 connections (ResNet), inception blocks -- and **transfer learning** from models pretrained on millions
@@ -146,8 +277,11 @@ of images. That is L19. Training those at scale (GPU, augmentation) is the CDAT 
 | Convolutional layer | slide a small filter over local receptive fields; weights shared across positions |
 | Filter / kernel | the small learnable weight matrix; one filter = one pattern detector |
 | Feature map | a filter's output: where in the image that pattern fires |
-| Stride / padding | step size of the filter / zero-border to control output size |
-| Parameter sharing | one filter reused everywhere -> few weights + translation invariance |
+| Stride / padding | step size of the filter / zero border; together they set the output size |
+| Output size | `(n+2p-k)/s+1`, rounded down: 3x3 with p=1, s=1 keeps 28; 2x2 pool halves it |
+| Parameter sharing | one filter reused everywhere: few weights, pattern found anywhere |
+| Conv parameters | `(C_in*k*k+1)*C_out`; image size does not appear |
+| Equivariance / invariance | conv: the map moves with the input; pooling: small shifts barely matter |
 | Channels / stacking | input depth (1 gray, 3 RGB); many filters -> many feature maps |
 | Pooling | subsample each feature map (max common); no weights; shrinks H and W |
 | Feature hierarchy | stacked conv layers: edges -> parts -> objects |
