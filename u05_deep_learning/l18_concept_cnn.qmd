@@ -89,7 +89,8 @@ $$
 n_{\text{out}} = \left\lfloor \frac{n + 2p - k}{s} \right\rfloor + 1
 $$
 
-Three cases cover this lesson. A 3x3 kernel with $p = 1$, $s = 1$ keeps the size:
+For a non-square input or kernel, apply the formula to the height and the width separately, each
+with its own $k$, $p$ and $s$. Three cases cover this lesson. A 3x3 kernel with $p = 1$, $s = 1$ keeps the size:
 $(28 + 2 - 3)/1 + 1 = 28$. The same kernel without padding shrinks it by two: $(28 - 3)/1 + 1 = 26$.
 A 2x2 window with stride 2 halves it: $\lfloor (28 - 2)/2 \rfloor + 1 = 14$.
 

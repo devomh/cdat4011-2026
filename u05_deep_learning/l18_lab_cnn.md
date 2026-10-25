@@ -162,6 +162,37 @@ A few things in that cell matter later:
 The data is **Fashion-MNIST** (Zalando Research, MIT licence), downloaded by `torchvision` the
 first time (about 30 MB).
 
+<details><summary>(Optional) What the setup code is doing: <code>device</code>, <code>torch.Generator</code>, <code>DataLoader</code></summary>
+
+**`device` and `.to(device)`.** A tensor lives either in the computer's main memory (the CPU) or on
+the GPU, and an operation can only combine tensors that live in the same place: a model's weights and
+the data it reads must be on the same device. `device` is `"cuda"` when the runtime has a GPU and
+`"cpu"` otherwise. The cell moves the whole dataset there once, so training never waits for images
+to be copied, and `fit` moves each new model there with `make_model().to(device)`. The way back is
+`.cpu()`: it brings a tensor back to main memory, which you need before plotting it (matplotlib works
+through NumPy, on the CPU) or before combining it with a tensor created on the CPU. On a CPU runtime
+both calls do nothing. Step 7 runs the trained model on the device and brings its results back with
+`.cpu()` to plot them.
+
+**`torch.Generator().manual_seed(42)`.** The `torch.manual_seed(42)` at the top seeds PyTorch's
+*global* random number generator, the one every random call draws from by default -- weight
+initialization included. Every draw moves that generator along, so anything that uses it depends on
+all the draws made before. `torch.Generator()` creates a separate, private generator; seeding it and
+passing it as `generator=g` gives `randperm` its own random stream, so the 54,000/6,000 split stays
+the same even if code that draws random numbers is later added between the seed and the split. The
+pattern pays off most in `fit`. Weight initialization draws from the global generator (which `fit`
+re-seeds with `torch.manual_seed(seed)`), and each architecture draws a different number of values.
+The batch order has its own generator, so all four models in Step 6 train on exactly the same
+sequence of batches.
+
+**`TensorDataset` and `DataLoader`.** `TensorDataset(X_train, y_train)` pairs the images and labels
+row by row, so item `i` is image `i` with its label. `DataLoader` then does what L17's hand-written
+`torch.randperm(...).split(batch_size)` loop did: with `shuffle=True` it reshuffles the rows at every
+epoch and hands them out in batches of 64. Its own seeded generator makes that shuffle order
+repeatable.
+
+</details>
+
 ## Step 1: Look at the Data
 
 Two helpers, the same ones you met in L17, let you look at images. `show_images` draws random
@@ -277,8 +308,9 @@ channels, height, width), just fast.
 
 **Output size.** Padding and stride decide how big the feature map is. For an `n x n` input, a
 `k x k` kernel, padding `p` and stride `s`, each side of the output is
-`floor((n + 2p - k) / s) + 1`. Before running the next cell, predict the output size of each of the
-three configurations below for our 4x4 image and 3x3 kernel.
+`floor((n + 2p - k) / s) + 1`. For a non-square input or kernel, apply it to the height and the
+width separately. Before running the next cell, predict the output size of each of the three
+configurations below for our 4x4 image and 3x3 kernel.
 
 ```python
 for pad, stride in [(1, 1), (0, 1), (1, 2)]:
@@ -422,18 +454,42 @@ print("CNN total params:", n_params(cnn))
 CNN total params: 421642
 ~~~
 
+<details><summary>(Optional) Reading the arguments of <code>nn.Conv2d</code> and <code>nn.MaxPool2d</code></summary>
+
+- **Argument order.** `nn.Conv2d(1, 32, 3, padding=1)` follows
+  `Conv2d(in_channels, out_channels, kernel_size, ...)`: 1 input channel, 32 filters, each 3x3. The
+  bare `3` is the kernel size.
+- **One number or a pair.** `kernel_size`, `padding` and `stride` each take either a single number,
+  used for both height and width, or a `(height, width)` pair. The layer above stores
+  `kernel_size=(3, 3)`, `padding=(1, 1)` and `stride=(1, 1)`. Padding is added on both sides of each
+  dimension: `padding=1` puts one row of zeros at the top **and** the bottom, and one column at the
+  left **and** the right. `nn.Conv2d` also accepts `padding="same"` (with stride 1 only), which
+  keeps the size for you.
+- **Height and width are computed separately.** The output-size formula from Step 2 applies to each
+  dimension with its own kernel size, padding and stride. On a 28x28 input,
+  `nn.Conv2d(1, 4, (1, 7), padding=(0, 3))` keeps 28x28, and `nn.MaxPool2d((2, 1))` gives 14x28:
+  only the height halves.
+- **The stride defaults differ.** In `nn.Conv2d` the stride defaults to **1**. In `nn.MaxPool2d`
+  (and `nn.AvgPool2d`) it defaults to **the window size**, so `nn.MaxPool2d(2)` is a 2x2 window that
+  jumps 2 pixels at a time -- that is why it halves the size without `stride=2` being written. When
+  the window does not divide the size evenly, the formula rounds down: `nn.MaxPool2d(3)` turns 28
+  into 9 and drops the leftover edge.
+
+</details>
+
 **Counting a convolution's weights.** A filter spans every input channel, so one `k x k` filter on
 `C_in` channels has `C_in * k * k` weights plus one bias, and the layer has `C_out` such filters:
-`(C_in * k * k + 1) * C_out` parameters. Image size does not appear in the formula at all -- that is
-parameter sharing.
+`(C_in * k * k + 1) * C_out` parameters. For a non-square `kh x kw` kernel, `k * k` becomes
+`kh * kw`; the cell below reads both from `kernel_size`. Image size does not appear in the formula at
+all -- that is parameter sharing.
 
 ```python
 for i in (0, 3):                     # the two Conv2d layers
     conv = cnn[i]
     c_in, c_out = conv.in_channels, conv.out_channels
-    k = conv.kernel_size[0]
-    by_hand = (c_in * k * k + 1) * c_out
-    print(f"Conv2d({c_in}, {c_out}, {k}): ({c_in}*{k}*{k} + 1)"
+    kh, kw = conv.kernel_size        # (3, 3): height, width
+    by_hand = (c_in * kh * kw + 1) * c_out
+    print(f"Conv2d({c_in}, {c_out}, {kh}): ({c_in}*{kh}*{kw} + 1)"
           f" * {c_out} = {by_hand}; PyTorch: {n_params(conv)}")
 ```
 
@@ -630,6 +686,7 @@ What has the network learned? Start with filters you can read: four hand-set 3x3
 one real test image, an ankle boot.
 
 ```python
+# [:1] keeps the batch dim; .cpu() so it can be combined with the hand kernels (CPU)
 img = X_test[:1].cpu()                  # [1, 1, 28, 28]
 hand_kernels = {
     "vertical edge":   [[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]],
@@ -671,7 +728,8 @@ different pictures: each feature map shows where *its* pattern occurs.
 Now the real thing. The first convolutional layer of the trained CNN has 32 filters, each a 3x3 grid
 of learned weights. Below, every filter is drawn **directly above the feature map it produces** on the
 same boot (after the ReLU). Filter weights are colored red for positive and blue for negative, with
-white at zero, so you can see which way each one is tilted.
+white at zero, so you can see which way each one is tilted. Each feature map is scaled to its own
+range: 0 is black and the map's largest value is white.
 
 ```python
 w = cnn[0].weight.detach().cpu()[:, 0]          # [32, 3, 3]
@@ -690,9 +748,9 @@ plt.tight_layout()
 plt.show()
 ```
 
-A 3x3 grid of learned weights is hard to read on its own -- most filters are a mix of positive and
-negative entries with no obvious picture in them. The feature maps underneath make each filter's job
-visible:
+A 3x3 grid of learned weights is harder to read than the hand-set kernels above -- most filters mix
+positive and negative entries without a clean pattern. The feature maps underneath make each
+filter's job visible:
 
 - **Many filters trace edges.** Several maps show the boot's outline, the line of the sole, or the
   stitching on the upper as thin bright lines -- learned versions of the hand-set edge kernels above,
@@ -703,6 +761,27 @@ visible:
   edges.
 - **Some are almost silent on this image.** Their pattern is simply not present in an ankle boot;
   they may fire strongly on a shirt or a bag.
+
+**Reading the weights themselves.** Three rules, building on the hand-set kernels above, explain
+most of what the 3x3 grids show:
+
+- **Edge or line.** A filter that is negative (blue) on one side and positive (red) on the other is
+  an **edge** detector, like the hand-set vertical-edge kernel: one with a blue column on the left and
+  a red column on the right traces vertical boundaries. A filter with a positive middle row or column
+  and negative weights on at least one side of it is a **line** detector: it answers most to a thin
+  bright stroke, such as stitching or an outline.
+- **One direction of contrast.** The ReLU after the convolution keeps only positive responses, so a
+  filter sees contrast in one direction only. A dark-left/bright-right edge filter is silent on a
+  bright-left/dark-right edge: there it answers with negative numbers, which the ReLU turns into 0.
+  So a "horizontal" filter with its positive weights on top is really a *bright above dark*
+  detector. On this boot the main bright-above-dark boundary is the bottom of the sole, so the map of
+  such a filter is nearly empty except there.
+- **The bias.** Each filter adds its bias at every position. On the flat dark background every
+  weight multiplies 0, so the response there is just the bias. A negative bias leaves the background
+  black, and a small positive one draws it dark gray. When a large positive bias meets mostly
+  negative weights, you get the background filters above: the bias lights up the empty background,
+  and the negative weights silence the filter on the bright boot, leaving a dark silhouette (a few
+  positive weights can still draw a bright rim along its edge).
 
 On a GPU, or with a different seed, the learned filters come out somewhat different, so your figure
 may not match this one filter for filter; look for the same *kinds* of maps -- edges, background,
