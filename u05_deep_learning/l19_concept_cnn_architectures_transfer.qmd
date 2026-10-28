@@ -15,7 +15,7 @@ By the end of this lesson you will be able to:
 - **Describe** the canonical CNN architecture pattern (conv/ReLU blocks plus pooling; spatial size
   shrinks while depth grows) and place LeNet, AlexNet, VGG, and ResNet on the timeline. *(Understand)*
 - **Explain** the degradation problem and how a **residual (skip) connection** fixes it, letting very
-  deep networks train. *(Understand)*
+  deep networks train -- and see it happen in a 19-layer CNN in the lab. *(Understand)*
 - **Apply** transfer learning in PyTorch: load a **pretrained** model, **freeze** the backbone, replace
   the **head**, and train it. *(Apply -- in the lab)*
 - **Demonstrate** that transfer learning beats from-scratch training on little data, and **distinguish**
@@ -36,12 +36,56 @@ same way. The hard, expensive work of learning what edges, textures, and object-
 already done, once, on more than a million ImageNet photos, by networks the field spent a decade
 refining. A **pretrained** network is that reusable engine, and **transfer learning** is the import
 statement: freeze what it already knows, bolt a small new classifier on top, and learn your task from a
-few hundred examples instead of a few million.
+thousand examples instead of a few million.
 
 Two ideas make this lesson. The first is **why** those very deep networks could be trained at all --
 the **residual connection**, one small architectural trick. The second is **how** you reuse them. By
 the end you will have taken a ResNet trained on ImageNet and, in about thirty seconds on a CPU, turned
 it into a CIFAR-10 classifier that crushes a CNN trained from scratch on the same data.
+
+## Two Datasets: ImageNet and CIFAR-10
+
+Two datasets carry this lesson, and both are landmarks of the field.
+
+**ImageNet** is a collection of photos -- about 14 million today -- sorted into about 22,000
+categories. Jia Deng, Fei-Fei Li, and colleagues introduced it in 2009, and crowd workers on Amazon
+Mechanical Turk checked the labels. Its best-known slice, used by the **ImageNet Large Scale Visual Recognition Challenge (ILSVRC)**
+from 2010 to 2017, has 1,000 classes and about 1.28 million training images. That yearly competition
+was the field's scoreboard, scored by **top-5 error**: the share of test images whose true class is not
+among the model's five best guesses. In 2012 AlexNet, a CNN, won it with a top-5 error of 15.3%, against 26.2%
+for the runner-up, which used hand-designed features -- the result that started the deep-learning boom.
+In 2015 ResNet brought the error down to 3.57%. ImageNet is free for non-commercial research but needs
+a registration, which is why libraries ship the *weights* of models trained on it rather than the
+images themselves. When this lesson calls a model "pretrained", it means trained on ILSVRC's 1,000
+classes.
+
+**CIFAR-10** is the small benchmark: 60,000 color images of 32x32 pixels in 10 classes, assembled by
+Alex Krizhevsky, Vinod Nair, and Geoffrey Hinton and released in 2009. It is small enough to train on a
+laptop, which made it the standard first test for new ideas; its sibling CIFAR-100 has 100 classes.
+`torchvision.datasets` downloads it in one line, which is how the lab gets it.
+
+| | ImageNet (the ILSVRC slice) | CIFAR-10 |
+|---|---|---|
+| Released | 2009 (Deng, Fei-Fei Li, et al.) | 2009 (Krizhevsky, Nair, Hinton) |
+| Images | ~1.28 million train · 50,000 validation | 50,000 train · 10,000 test |
+| Classes | 1,000 | 10 (6,000 images each) |
+| Image size | varies; usually resized to 224x224 | 32x32, color |
+| Role in this lesson | where the pretrained backbone learned its features | the small new task (the lab uses 100 images per class) |
+
+Note the size gap in the last two rows. The lab enlarges each 32x32 CIFAR image to 96x96 so the
+pretrained network has something closer to what it saw in training, which is why the lab's pictures look
+blurry. Transfer has to bridge that gap: from sharp ImageNet photos to upscaled thumbnails.
+
+Benchmark datasets have histories, too. CIFAR's images were drawn from **80 Million Tiny Images**, a
+web-scraped collection whose creators withdrew it in 2020 after an audit found racist and misogynistic
+labels (CIFAR was labeled separately, by hand, and remains in use). Around the same time, the ImageNet
+team found that 1,593 of the 2,832 "person" categories in the full ImageNet (not the 1,000-class slice)
+were potentially offensive and set out to remove them. A pretrained model carries whatever its training data contained, so find out what a model was
+trained on before you build on it.
+
+**Explore:** browse CIFAR-10 in the [Hugging Face dataset viewer](https://huggingface.co/datasets/uoft-cs/cifar10)
+· the [CIFAR page](https://www.cs.toronto.edu/~kriz/cifar.html) · [image-net.org](https://www.image-net.org/)
+· the ILSVRC overview paper (Russakovsky et al.) on [arXiv](https://arxiv.org/abs/1409.0575).
 
 ## The CNN Architecture Pattern
 
@@ -54,7 +98,8 @@ more abstract features. At the top sits a small fully connected **head** ending 
 in L18. A useful rule of thumb: prefer several small `3x3` kernels over one large kernel -- they see the
 same region with fewer parameters.
 
-That pattern has a history, and four names trace it:
+That pattern has a history, and four names trace it -- the last three made their names in the ILSVRC
+competition:
 
 | Year | Network | What it added |
 |---|---|---|
@@ -83,7 +128,9 @@ through untouched. Just as importantly, the skip gives gradients a direct path b
 the early layers without being throttled. A **residual block** -- two convolutions plus a skip -- is
 ResNet's repeating unit, and stacking them is what lets a 150-layer network train as easily as a
 shallow one. Where L17's initialization and batch-norm *tamed* unstable gradients, residual connections
-add a structural **highway** for them. (The same trick reappears in L22's Transformer blocks.)
+add a structural **highway** for them. (The same trick reappears in L22's Transformer blocks.) The lab
+shows the degradation problem directly: a 19-layer CNN without skips never gets past guessing, while
+the same network with skips trains normally.
 
 ```{mermaid}
 flowchart LR
@@ -115,13 +162,16 @@ useless for yours. So you **replace the head** and choose how much of the backbo
   end-to-end at a **low** learning rate, so backprop gently adapts the high-level features without
   wrecking them. The more data you have, the more layers you can afford to unfreeze.
 
-```{mermaid}
-flowchart LR
-  img["input image"] --> bb["pretrained backbone<br/>(frozen)"]
-  bb --> f["512 features"]
-  f --> hd["new head<br/>(trained)"]
-  hd --> out["class logits"]
-```
+![Transfer learning with ResNet18, in three stages. Blue blocks hold weights learned on ImageNet, gray blocks are frozen copies, orange blocks are trained on the new task, and green bars are the 512 pooled features. Block sizes follow the shapes but are not to scale.](../assets/l19_transfer_learning.svg){#fig-transfer-learning fig-alt="Three rows of 3-D block diagrams of ResNet18. Row 1, pretrained on ImageNet: a 3 x 224 x 224 photo feeds blue blocks conv1 + pool and layer1 (64 x 56 x 56), layer2 (128 x 28 x 28), layer3 (256 x 14 x 14) and layer4 (512 x 7 x 7), then a pool bar of 512 features and a gray fc head for 1000 classes crossed out in red and labelled removed. An arrow labelled weights copied leads to row 2, feature extraction on CIFAR-10: a blurry 3 x 96 x 96 cat image feeds the same five blocks, now gray, with shapes 64 x 24 x 24 down to 512 x 3 x 3, under a brace labelled frozen backbone (requires_grad = False), then the 512 features and an orange new head, fc with 10 classes, trained. An arrow labelled then, if you have more data leads to row 3, fine-tuning: conv1 to layer3 stay gray under a brace labelled still frozen, layer4 is orange and labelled layer4 unfrozen, the head is orange, and a dashed arrow pointing back toward the input reads more data? unfreeze more blocks, from the top down (earliest layers last). A legend names the five colors."}
+
+Read the figure row by row. **Row 1** is ResNet18 as it comes from ImageNet: its backbone shrinks a
+224x224 photo to 512 numbers, and its head turns those into scores for 1,000 ImageNet classes -- useless
+for a new task, so it is removed. **Row 2** is feature extraction, the lab's main recipe: the same
+backbone, with every block frozen, now reads a 96x96 CIFAR image (the shapes are smaller, the weights are
+the same), and only a new 10-class head is trained. **Row 3** is fine-tuning: the top block, `layer4`,
+is unfrozen too and trained at a low learning rate. With more data you can unfreeze more blocks, working
+down from the top; the earliest blocks, which detect edges and textures, are the last to unfreeze
+because their features are the most general.
 
 The guidelines are simple: freeze first and see how far it gets you; unfreeze top-down only if you need
 more and have the data; reduce the learning rate when you unfreeze. Transfer learning works best with
@@ -130,10 +180,54 @@ low-level structure with the originals -- which also means you must feed inputs 
 with the **same normalization** the model was trained with (ImageNet's per-channel mean and std).
 
 In PyTorch the gateway is **`torchvision.models`**: a library of architectures with pretrained weights,
-from LeNet-era nets through ResNet, VGG, EfficientNet, ConvNeXt, and Vision Transformers, loaded in one
+from AlexNet and VGG through ResNet, EfficientNet, ConvNeXt, and Vision Transformers, loaded in one
 line: `torchvision.models.resnet18(weights="DEFAULT")`. When you cannot get more labeled data, the other
 cheap regularizer is **data augmentation** -- growing the training set with realistic variants (random
-crops, horizontal flips, small rotations) applied on the fly each epoch.
+crops, horizontal flips, small rotations) applied on the fly each epoch. The lab ends with a short
+measured taste of augmentation and other tricks.
+
+## Where to Find Pretrained Models
+
+`torchvision.models` is one of several places that publish pretrained weights. The main ones, and the
+framework each serves:
+
+| Hub | Framework | What you find there |
+|-----------------------|---------------------------|---------------------------------------------------|
+| [torchvision.models](https://pytorch.org/vision/stable/models.html) | PyTorch | the classic vision models: classification, detection, segmentation |
+| [timm](https://huggingface.co/timm) | PyTorch | over a thousand image backbones; the widest catalog of CNNs and ViTs |
+| [PyTorch Hub](https://pytorch.org/hub/) | PyTorch | research models published straight from their authors' repositories |
+| [Keras Applications](https://keras.io/api/applications/) | TensorFlow / Keras | the classic ImageNet CNNs (ResNet, EfficientNet, ConvNeXt, VGG, MobileNet) |
+| [KerasHub](https://keras.io/keras_hub/) | Keras 3 (on a TensorFlow, JAX, or PyTorch backend) | vision and language models, with checkpoints hosted on Kaggle |
+| [Kaggle Models](https://www.kaggle.com/models) | mostly TensorFlow / Keras, also PyTorch and JAX | the former TensorFlow Hub catalog (tfhub.dev links redirect here since 2023), plus Google and DeepMind models |
+| [Hugging Face Hub](https://huggingface.co/models) | any (mostly PyTorch; each model card names its library) | the largest: vision, text, audio, and multimodal models |
+
+: Where pretrained weights live, and which framework loads them {tbl-colwidths="[24,30,46]"}
+
+Loading looks much the same everywhere -- one line, and several hubs build the "replace the head" step
+into that line:
+
+```python
+# PyTorch
+model = torchvision.models.resnet18(weights="DEFAULT")
+model = torch.hub.load("pytorch/vision", "resnet18", weights="DEFAULT")
+# timm: num_classes=10 swaps in a new 10-class head
+model = timm.create_model("resnet50", pretrained=True, num_classes=10)
+# Hugging Face transformers: num_labels=10 does the same
+model = AutoModelForImageClassification.from_pretrained(
+    "microsoft/resnet-50", num_labels=10, ignore_mismatched_sizes=True)
+
+# Keras Applications: include_top=False drops the 1000-class head
+model = keras.applications.ResNet50(weights="imagenet", include_top=False)
+# KerasHub: num_classes=10 swaps in a new 10-class head
+model = keras_hub.models.ImageClassifier.from_preset(
+    "resnet_v2_50_imagenet", num_classes=10)
+```
+
+Two cautions. **Weights load only in the framework that saved them:** a PyTorch checkpoint needs PyTorch
+and a Keras one needs Keras -- Keras 3 and KerasHub are the exception, since they run on any of the three
+backends. On Hugging Face, filter by "Library" to see what you can load. **Weights come with a
+license:** most are permissive, but not all (YOLO models from Ultralytics are AGPL, and the Llama family
+has its own license), so check it before you build a product on one.
 
 ## Common Pitfalls
 
@@ -154,6 +248,13 @@ crops, horizontal flips, small rotations) applied on the fly each epoch.
 hard to get wrong. Fine-tune the top layers only if you have enough data and feature extraction is not
 good enough -- and always drop the learning rate when you do.
 
+**"Shouldn't the new head have a hidden layer, like 512 -> 256 -> 10?"** -- Many older tutorials do
+that. They come from the VGG era, when the head sat on a flattened 7x7x512 feature map of 25,088 numbers
+and VGG's own head had three dense layers. ResNet averages each feature map down to one number and uses
+a single linear layer as its head, and a single linear layer on those 512 features is the standard
+default today. A hidden layer can help with more data or images far from ImageNet; with little data it
+mostly adds parameters. The lab's Exercise 2 measures it.
+
 **"Which architecture should I pick?"** -- For most image tasks, start with a ResNet (e.g. `resnet18`
 or `resnet50`); it is a reliable, well-supported default. Pick a smaller/faster model (MobileNet,
 EfficientNet) for phones or tight latency, a larger one for maximum accuracy.
@@ -171,6 +272,8 @@ and full augmentation pipelines, is the CDAT 4013 lab's territory.
 
 | Concept | The one-liner |
 |---|---|
+| ImageNet / ILSVRC | ~1.28M photos, 1,000 classes; the competition (2010-2017) where modern CNNs proved themselves |
+| CIFAR-10 | 60,000 tiny 32x32 images, 10 classes; the standard small benchmark |
 | Architecture pattern | conv/ReLU + pool blocks: spatial size shrinks, depth (feature maps) grows; FC head on top |
 | The timeline | LeNet (1998) -> AlexNet (2012) -> VGG (2014) -> ResNet (2015) |
 | Degradation problem | very deep *plain* nets train *worse* -- an optimization failure, not overfitting |
@@ -180,6 +283,7 @@ and full augmentation pipelines, is the CDAT 4013 lab's territory.
 | Feature extraction | freeze the backbone, train only the new head (cheap; little data) |
 | Fine-tuning | unfreeze the top block(s), train end-to-end at a LOW learning rate |
 | torchvision.models | one-line pretrained architectures: `resnet18(weights="DEFAULT")` |
+| Model hubs | PyTorch: torchvision, timm, PyTorch Hub · Keras: Applications, KerasHub · both: Kaggle, Hugging Face |
 
 ## Where to Go Deeper
 
@@ -187,8 +291,11 @@ and full augmentation pipelines, is the CDAT 4013 lab's territory.
   transfer learning, with the architecture tables in full.
 - **Foundational:** He et al. (2015), *Deep Residual Learning for Image Recognition* -- the ResNet paper
   that introduced the residual connection.
-- **Docs:** the [torchvision.models](https://pytorch.org/vision/stable/models.html) catalogue (pretrained
-  weights + the expected input transforms) and the
-  [PyTorch transfer-learning tutorial](https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html).
+- **Foundational:** Deng et al. (2009), *ImageNet: A Large-Scale Hierarchical Image Database*, and
+  Russakovsky et al. (2015), [*ImageNet Large Scale Visual Recognition Challenge*](https://arxiv.org/abs/1409.0575)
+  -- the dataset and the competition behind every model in the timeline.
+- **Tutorial:** the
+  [PyTorch transfer-learning tutorial](https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html)
+  -- feature extraction and fine-tuning end to end, with data augmentation, on a GPU.
 - **Notes:** the Stanford CS231n [transfer-learning notes](https://cs231n.github.io/transfer-learning/) --
   when to freeze vs fine-tune, as a decision table.
