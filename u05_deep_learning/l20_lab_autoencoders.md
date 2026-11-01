@@ -756,6 +756,94 @@ The encoder shrinks each side 8-fold (296 to 37 and 448 to 56 above), so a 512x5
 64x64 code: `predicted = (1, 4, 64, 64)`, and the check prints `code shape: (1, 4, 64, 64) (48x fewer
 numbers)` -- 16,384 numbers for 786,432. That 64x64x4 grid is the space Stable Diffusion generates in.
 
+**Disturb the code.** What does the decoder make of a code that is slightly wrong? Add Gaussian noise to
+the cat's code and decode it again. The two models keep their codes on different scales, so the noise is
+sized relative to each code's own spread: `level=0.25` means a quarter of the code's typical size.
+
+```python
+with torch.no_grad():
+    z_tiny = tiny_vae.encode(photo).latents   # TAESD's own code
+print(f"code spread (std): SD VAE {z.std():.2f}, "
+      f"TAESD {z_tiny.std():.2f}")
+
+def decode_noisy(vae, code, level, seed=0):
+    """Add Gaussian noise of size level x (the code's own std)."""
+    g = torch.Generator(device=code.device).manual_seed(seed)
+    noise = torch.randn(code.shape, generator=g, device=code.device)
+    with torch.no_grad():
+        return vae.decode(code + level * code.std() * noise).sample
+
+levels = [0, 0.1, 0.25, 0.5, 1.0]
+fig, axes = plt.subplots(2, len(levels), figsize=(3.2 * len(levels), 5))
+for row, (name, vae, code) in enumerate([("SD VAE", sd_vae, z),
+                                         ("TAESD", tiny_vae, z_tiny)]):
+    for col, level in enumerate(levels):
+        out = decode_noisy(vae, code, level)
+        err = mse((out + 1) / 2, (photo + 1) / 2)
+        ax = axes[row, col]
+        ax.imshow(to_image(out))
+        ax.set_title(f"{name}, noise {level}\nMSE {err:.4f}", fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
+plt.tight_layout()
+plt.show()
+```
+
+~~~text
+code spread (std): SD VAE 3.78, TAESD 0.65
+~~~
+
+Noise of a tenth of the code's spread changes nothing you can see, and a quarter only adds a little
+texture to the fur. At 0.5 a painterly texture spreads over the whole picture, and at 1.0 the cat
+dissolves into a mosaic of patches -- yet the eyes and the outline of the head are still where they were.
+Each number in this spatial code describes one small patch, so the noise changes the texture of each
+region, never what the picture shows. (The printed spreads also show that TAESD's code comes about six
+times smaller than the SD VAE's: it is pre-scaled to the range Stable Diffusion's generator works in,
+which is why the noise is sized to each code.)
+
+**Sample the code.** The SD VAE is a variational autoencoder, so its encoder returns a cloud -- a mean
+and a spread for every number -- not a single code (`latent_dist`; above we used `.mean`). Draw a sample
+from the cat's cloud and decode it, then decode pure noise: random numbers with the same spread as a
+real code, the way Step 3's VAE grid and Step 8's faces are made.
+
+```python
+with torch.no_grad():
+    post = sd_vae.encode(photo).latent_dist
+    from_mean = sd_vae.decode(post.mean).sample
+    torch.manual_seed(0)
+    from_sample = sd_vae.decode(post.sample()).sample
+    noise_code = post.mean.std() * torch.randn_like(post.mean)
+    from_noise = sd_vae.decode(noise_code).sample
+print(f"spread of the code: {post.mean.std():.2f}; "
+      f"sigma of each number: median {post.std.median():.4f}")
+print(f"sample vs mean, MSE: {mse(from_sample, from_mean):.1e}")
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4.4))
+for ax, img, title in zip(axes, [from_mean, from_sample, from_noise],
+                          ["decode the mean", "decode a sample",
+                           "decode random noise"]):
+    ax.imshow(to_image(img))
+    ax.set_title(title)
+    ax.set_xticks([])
+    ax.set_yticks([])
+plt.show()
+```
+
+~~~text
+spread of the code: 3.78; sigma of each number: median 0.0003
+sample vs mean, MSE: 2.4e-09
+~~~
+
+The cat's cloud is tiny: each number's sigma is about 0.0003 against a code spread of 3.78, some ten
+thousand times smaller, so a sample decodes to the same cat (MSE 2.4e-09 against the mean's decode). And
+random noise decodes to a mosaic of colored texture with no object in it. Both have one cause: this
+autoencoder was trained with a KL weight of one millionth (beta = 0.000001 in its training
+configuration), the far small end of the concept note's beta dial. The KL term barely acted, so the clouds
+shrank to points and the codes never filled a standard-normal cloud: the model behaves like a plain
+autoencoder with sharp reconstructions, and a random point is not a valid code. Producing a valid code is
+the job of Stable Diffusion's other network, the diffusion model, which turns noise into a meaningful
+64x64x4 code step by step before this decoder paints it.
+
 ### Step 8: Steering a Face VAE with Sliders
 
 The last model is a convolutional VAE trained for this course on 68,536 faces from **CelebA** (a research
@@ -863,7 +951,35 @@ show_faces(z_random)
 
 Eight blurry faces -- a VAE trained with a pixel loss, at 64x64 -- but unmistakably faces, with
 different ages, hair and lighting, each decoded from 128 random numbers. A plain autoencoder could not do
-this (Step 3).
+this (Step 3) -- and, as Step 7 showed, neither can Stable Diffusion's autoencoder on its own.
+
+The face VAE's clouds are also wide. Encode the first random face back into a mean and a spread, and
+decode five samples from its cloud:
+
+```python
+with torch.no_grad():
+    face0 = face_vae.decode(z_random[:1].to(device))
+    mu, logvar = face_vae.encode(face0)
+    sigma = torch.exp(0.5 * logvar)
+print(f"spread of the codes: {codes.std():.2f}; "
+      f"sigma of this face's code: median {sigma.median():.2f}")
+
+torch.manual_seed(1)
+around = torch.cat([mu] + [mu + sigma * torch.randn_like(mu)
+                           for _ in range(5)])
+show_faces(around.cpu(), ["mean"] + [f"sample {k}" for k in range(1, 6)])
+```
+
+~~~text
+spread of the codes: 0.62; sigma of this face's code: median 0.79
+~~~
+
+Here the cloud is wide -- the sigma of each number (0.79) is larger than the spread of the codes across
+all 19,867 faces in the table (0.62) -- because this model was trained with beta = 1. The five samples
+are the same face with different hair (darker or lighter, fuller or flatter), lighting and small changes of
+shape: nearby codes mean "a plausible variant of this face". The two VAEs of Part B sit at opposite ends
+of the beta dial. A large beta gives a smooth space you can sample and edit, with blurry pictures; a tiny
+beta gives sharp pictures and leaves generation to another model.
 
 An **attribute direction** is the difference between the average code of the faces that have an
 attribute and the average code of those that do not. Adding it to a code should add the attribute:
@@ -1036,7 +1152,9 @@ and the same caution applies to any "attribute direction" you read about.
   reconstructed better (0.0090) with a quarter of the parameters; and reconstruction error alone flagged
   never-seen bags with an ROC AUC of **0.942**.
 - **Stable Diffusion's** autoencoder squeezed a photo 48-fold into a spatial code and gave it back sharp
-  -- the payoff of perceptual and adversarial losses. A face VAE's code could be steered along attribute
-  directions, which also carry the dataset's biases.
+  -- the payoff of perceptual and adversarial losses. Noise in that code changed texture, not content, and
+  with a KL weight of one millionth it cannot be sampled: random codes decode to texture. The face VAE
+  (beta = 1) can be sampled, and its code steered along attribute directions, which also carry the
+  dataset's biases.
 - Next (L21): instead of compressing its whole input into one code, a model with **attention** decides
   which parts of its input to look at -- the idea behind Transformers.
