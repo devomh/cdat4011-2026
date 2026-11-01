@@ -13,3 +13,9 @@ repository.
 ## License
 
 Course content is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (see `LICENSE`).
+
+**Exception:** `u05_deep_learning/models/l20_face_vae.safetensors` and
+`u05_deep_learning/models/l20_face_latents.safetensors` are derived from the
+[CelebA dataset](https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html) (a model trained on it,
+and its attribute annotations with encoded codes). They are **not** covered by CC BY 4.0:
+they are provided under CelebA's terms, for non-commercial research and educational use only.
