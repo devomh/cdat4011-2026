@@ -62,7 +62,8 @@ classes.
 **CIFAR-10** is the small benchmark: 60,000 color images of 32x32 pixels in 10 classes, assembled by
 Alex Krizhevsky, Vinod Nair, and Geoffrey Hinton and released in 2009. It is small enough to train on a
 laptop, which made it the standard first test for new ideas; its sibling CIFAR-100 has 100 classes.
-`torchvision.datasets` downloads it in one line, which is how the lab gets it.
+`torchvision.datasets` downloads it in one line; the lab reads the same images from a faster copy on the
+Hugging Face Hub.
 
 | | ImageNet (the ILSVRC slice) | CIFAR-10 |
 |---|---|---|

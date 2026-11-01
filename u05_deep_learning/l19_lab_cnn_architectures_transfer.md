@@ -34,13 +34,17 @@ and two deep ones that differ only in their skip connections -- and measure how 
 
 Two cells: the first installs, the second imports, seeds, loads a small CIFAR-10 subset, and defines
 helpers. CIFAR-10 images are only 32x32 pixels; we resize them to 96x96 and normalize with the
-**ImageNet** statistics the pretrained model expects.
+**ImageNet** statistics the pretrained model expects. The images come from a copy of CIFAR-10 on the
+Hugging Face Hub (`uoft-cs/cifar10`, about 145 MB, under a minute): `torchvision.datasets.CIFAR10` would
+fetch the same images from the University of Toronto's server, which is often very slow. The small
+`CIFAR10Hub` class below behaves like torchvision's dataset and puts the images in torchvision's order.
 
 ```python
 # Setup, cell 1 of 2 -- INSTALL (run once; Colab wipes installs when it resets on open)
 # Colab already ships these, so this is effectively a no-op there.
-%pip install -q torch torchvision scikit-learn matplotlib
-# local, in a terminal (not in the notebook):  uv add torch torchvision scikit-learn matplotlib
+%pip install -q torch torchvision scikit-learn matplotlib huggingface_hub pandas pyarrow
+# local, in a terminal (not in the notebook):
+#   uv add torch torchvision scikit-learn matplotlib huggingface_hub pandas pyarrow
 ```
 
 ```python
@@ -52,7 +56,11 @@ import matplotlib.pyplot as plt
 import torchvision
 from torchvision import transforms
 from torchvision.models import resnet18, ResNet18_Weights
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Dataset, Subset
+import io
+import pandas as pd
+from PIL import Image
+from huggingface_hub import hf_hub_download
 
 torch.manual_seed(42); np.random.seed(42)
 
@@ -61,8 +69,34 @@ IMAGENET_MEAN = [0.485, 0.456, 0.406]; IMAGENET_STD = [0.229, 0.224, 0.225]
 tfm = transforms.Compose([transforms.Resize(96), transforms.ToTensor(),
                           transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
 
-train_full = torchvision.datasets.CIFAR10("data", train=True,  download=True, transform=tfm)
-test_full  = torchvision.datasets.CIFAR10("data", train=False, download=True, transform=tfm)
+class CIFAR10Hub(Dataset):
+    """CIFAR-10 from the Hugging Face Hub, with the same interface and image order as
+    torchvision.datasets.CIFAR10 (.data, .targets, .classes; transform applied on indexing)."""
+    classes = ["airplane", "automobile", "bird", "cat", "deer",
+               "dog", "frog", "horse", "ship", "truck"]
+
+    def __init__(self, train, transform=None):
+        split = "train" if train else "test"
+        path = hf_hub_download("uoft-cs/cifar10", f"plain_text/{split}-00000-of-00001.parquet",
+                               repo_type="dataset", local_dir="data/cifar10_hub",
+                               revision="0b2714987fa478483af9968de7c934580d0bb9a2")  # pinned copy
+        df = pd.read_parquet(path)
+        data = np.stack([np.array(Image.open(io.BytesIO(b["bytes"])).convert("RGB")) for b in df["img"]])
+        targets = df["label"].to_numpy()
+        if train:  # the copy stores torchvision's five 10,000-image training batches as 4, 3, 2, 5, 1
+            order = np.concatenate([np.arange(b * 10000, (b + 1) * 10000) for b in (4, 2, 1, 0, 3)])
+            data, targets = data[order], targets[order]
+        self.data, self.targets, self.transform = data, targets.tolist(), transform
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, i):
+        img = Image.fromarray(self.data[i])
+        return (self.transform(img) if self.transform else img), self.targets[i]
+
+train_full = CIFAR10Hub(train=True,  transform=tfm)
+test_full  = CIFAR10Hub(train=False, transform=tfm)
 CLASSES = train_full.classes
 
 def balanced_subset(ds, per_class, seed=42):
