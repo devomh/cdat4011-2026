@@ -24,8 +24,9 @@ missing. Everything runs on CPU in about ten seconds. Pairs with the concept not
 
 ## Scenario
 
-L21 built one attention layer and found its one flaw: it is **order-blind**. Shuffle the input and the
-output is identical, so "dog bites man" and "man bites dog" look the same. Everything else about a
+L21 built one attention layer and found its central flaw: it is **order-blind**. Shuffle the input and
+each output just moves with its token, while a pooled readout does not change at all, so "dog bites
+man" and "man bites dog" look the same. Everything else about a
 Transformer -- several attention heads, residual + layer-norm blocks, a stack of them -- is
 engineering around the core operation you already have. The one genuinely new idea is **positional
 encoding**: a way to tell the set-based attention layer where each token sits. We build the pieces,

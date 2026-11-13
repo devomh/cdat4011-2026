@@ -34,9 +34,11 @@ By the end of this lesson you will be able to:
 ## Why This Matters
 
 L21 ended on a cliffhanger. A single attention layer can reach any position in one hop -- a huge win
-for long-range dependencies -- but it is **order-blind**: shuffle the input tokens and the output is
-identical, because attention treats its input as a **set**. For a lookup that is fine; for language it
-is fatal, since "dog bites man" and "man bites dog" would look the same.
+for long-range dependencies -- but it is **order-blind**: shuffle the input tokens and each output just
+moves with its token, and a pooled readout does not change at all, because attention compares tokens by
+content only. For a lookup that is fine; for language it is fatal, since "dog bites man" and "man bites
+dog" would look the same (L21's IMDB model gave "not bad, it is good" and "not good, it is bad" the same
+score).
 
 Everything else about a Transformer is engineering around the attention you already built. Run several
 attention computations in parallel (**multi-head**). Wrap each sublayer in a residual connection and a
