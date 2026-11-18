@@ -14,7 +14,7 @@ fit K-Means, read its centroids and per-point distances, see that "similarity" i
 score, and then watch the same algorithm fail on a banana-shaped dataset -- the failure that
 sets up L24. Pairs with the concept note [K-Means Clustering & Similarity](l23_concept_kmeans_clustering.qmd).
 
-> **Previously:** L22 -- The Transformer Architecture (Unit V; Exam II covers it)  |  **Next:** L24 -- Hierarchical & Density-Based Clustering
+> **Previously:** L22 -- The Transformer Architecture (closes Unit V)  |  **Next:** L24 -- Hierarchical & Density-Based Clustering
 
 > This page is the read-only view. To run the lab, open the notebook (`l23_lab_kmeans_clustering.ipynb`) -- in Colab via the badge below, or locally.
 >

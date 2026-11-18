@@ -1,361 +1,1073 @@
 ---
-title: "Lab: Build a Transformer"
+title: "Lab: Build a Transformer, from Heads to a Tiny GPT"
 unit: "V"
 lesson: "22"
 type: lab
-tags: [deep-learning, pytorch, transformer, multi-head-attention, positional-encoding, layer-norm]
+tags: [deep-learning, pytorch, transformer, multi-head-attention, positional-encoding, layer-norm, causal-masking, language-model, imdb]
 difficulty: intermediate
-duration: "45 mins"
+duration: "90 mins"
 ---
 
-**Goal:** assemble the single attention operation from L21 into the architecture that powers every
-large language model. You will build **multi-head attention**, **positional encoding**, and the
-**residual + layer-norm encoder block** -- all from L21's own `attention` function -- then train a
-small **Transformer** on an order-dependent task and watch positional encoding flip it from chance to
-solved. That is the exact gap L21 left open: pure attention is order-blind, and position is what it was
-missing. Everything runs on CPU in about ten seconds. Pairs with the concept note
-[The Transformer Architecture](l22_concept_transformers.qmd).
+**Goal:** turn L21's single attention layer into a Transformer, one part at a time, and measure what
+each part buys. Part A works with small tensors: **multi-head attention** and the **encoder block**
+built from scratch and checked against PyTorch's own layers, **positional encoding**, **layer
+normalization** by hand, a small Transformer that solves an order task only when it is told the
+positions, and an experiment on **depth** that shows why the residual connection matters and where the
+normalization should go. Part B moves to real text: an **IMDB** sentiment classifier with and without
+positional encoding, and a **tiny GPT** that learns to write movie-review text one character at a time.
+Pairs with the concept note [The Transformer Architecture](l22_concept_transformers.qmd).
 
-> **Previously:** L21 -- Attention Mechanisms (one attention layer, order-blind)  |  **Next:** L23 -- K-Means Clustering & Similarity (Unit VI)
+> **Previously:** L21 -- Attention Mechanisms (one attention layer; blind to order)  |  **Next:** L23 -- K-Means Clustering & Similarity (Unit VI)
 
-> This page is the read-only view. To run the lab, open the notebook (`l22_lab_transformers.ipynb`) -- in Colab via the badge below, or locally.
+> This page is the read-only view. To run the lab, open the notebook (`l22_lab_transformers.ipynb`) -- in Colab via the badge below, or locally. **Use a GPU runtime** (Runtime > Change runtime type > T4 GPU): the lab trains about a dozen models, and on a T4 the whole notebook takes about 4 minutes. A CPU also works but takes much longer (20 to 40 minutes on the machine that produced this page). The outputs shown here came from a CPU, so your numbers on a GPU or another machine may differ slightly.
 >
 > [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devomh/cdat4011-2026/blob/main/u05_deep_learning/l22_lab_transformers.ipynb)
 
 ## Scenario
 
-L21 built one attention layer and found its central flaw: it is **order-blind**. Shuffle the input and
-each output just moves with its token, while a pooled readout does not change at all, so "dog bites
-man" and "man bites dog" look the same. Everything else about a
-Transformer -- several attention heads, residual + layer-norm blocks, a stack of them -- is
-engineering around the core operation you already have. The one genuinely new idea is **positional
-encoding**: a way to tell the set-based attention layer where each token sits. We build the pieces,
-stack them into a Transformer, and prove on an order-dependent task that position is the missing
-ingredient.
+L21 ended with two sentences made of the same words: "this movie is not bad, it is good" and "this
+movie is not good, it is bad". Its attention classifier gave both exactly the same score, 0.8448,
+because attention compares words by content and never by position. The **Transformer** keeps that
+attention and adds a few parts around it: several attention heads side by side, a position signal, a
+residual connection and a normalization around every sublayer, and a stack of identical blocks. We
+build each part, check it against PyTorch, and test what it changes: first on tensors small enough to
+read, then on real movie reviews.
 
 ## Setup
 
-Two cells: the first installs, the second imports and seeds. There is no dataset to download -- every
-tensor in this lab is built in the notebook.
+Two cells: the first installs, the second imports, seeds and picks the device. The IMDB data is
+downloaded in Step 7.
 
 ```python
 # Setup, cell 1 of 2 -- INSTALL (run once; Colab wipes installs when it resets on open)
 # Colab already ships these, so this is effectively a no-op there.
-%pip install -q torch matplotlib
-# local, in a terminal (not in the notebook):  uv add torch matplotlib
+%pip install -q torch matplotlib pandas pyarrow
+# local, in a terminal (not in the notebook):
+#   uv add torch matplotlib pandas pyarrow
 ```
 
 ```python
-# Setup, cell 2 of 2 -- IMPORTS + SEEDS (safe to re-run without re-installing)
+# Setup, cell 2 of 2 -- IMPORTS + SEEDS + DEVICE (safe to re-run)
 import math
+import re
+import collections
+import textwrap
+from pathlib import Path
+from urllib.request import urlretrieve
+
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-torch.manual_seed(0); np.random.seed(0)
+# use the GPU when the runtime has one
+device = "cuda" if torch.cuda.is_available() else "cpu"
 np.set_printoptions(precision=3, suppress=True)
-print("setup ready -", "GPU" if torch.cuda.is_available() else "CPU")
+torch.manual_seed(0)
+np.random.seed(0)
+print("setup ready -", device)
 ```
 
 ~~~text
-setup ready - CPU
+setup ready - cpu
 ~~~
 
-## Step 1: Multi-Head Attention
+## Part A -- The Transformer on Small Tensors
 
-L21's attention let every token gather from the whole sequence in one weighted blend. But one blend
-can only track one kind of relationship at a time. **Multi-head attention** runs several attentions in
-**parallel**: split the width `d` into `h` slices of size `d/h`, run an independent attention in each
-**head**, then concatenate the results. Different heads can specialize -- one on the previous word,
-another on a distant noun -- and a final linear layer `Wo` mixes them. We reuse L21's `attention`
-verbatim (now with an optional mask, for Exercise 1):
+### Step 1: Multi-Head Attention
+
+We start from L21's `attention` function, with one change to the mask. In L21 the mask was a padding
+mask of shape `(batch, length)`, and the function reshaped it. Here the caller passes a mask already
+shaped to line up with the scores: `True` where a query **may** attend, `False` where it may not. That
+one convention covers both masks of this lesson: the padding mask (shape `(B, 1, 1, L)`, the same for
+every head and every query) and, in Step 8, the causal mask (shape `(L, L)`). Without a mask the
+function is exactly L21's.
+
+**Multi-head attention** splits the width `d` into `h` slices of `d/h` numbers, runs one attention in
+each slice (a **head**), puts the `h` results side by side again, and mixes them with a final linear
+layer `Wo`:
 
 ```python
 def attention(Q, K, V, mask=None):
-    """softmax(Q K^T / sqrt(d_k)) V. Optional additive mask is added to the scores before softmax."""
+    """softmax(Q K^T / sqrt(d_k)) V -> (output, weights).
+    mask: True where a query may attend; any shape that
+    broadcasts to the scores, e.g. (L, L) or (B, 1, 1, L)."""
     d_k = Q.shape[-1]
-    scores = (Q @ K.transpose(-2, -1)) / (d_k ** 0.5)
+    scores = Q @ K.transpose(-2, -1) / d_k ** 0.5
     if mask is not None:
-        scores = scores + mask
+        scores = scores.masked_fill(~mask, float("-inf"))
     weights = scores.softmax(dim=-1)
     return weights @ V, weights
 
 class MultiHeadSelfAttention(nn.Module):
-    """h attention heads in parallel: split d into h slices of size d/h, attend in each, concat."""
+    """h heads in parallel, each over a d/h slice."""
     def __init__(self, d, n_heads):
         super().__init__()
-        assert d % n_heads == 0, "d must divide evenly into n_heads"
-        self.n_heads, self.d_head = n_heads, d // n_heads
-        self.Wq = nn.Linear(d, d); self.Wk = nn.Linear(d, d); self.Wv = nn.Linear(d, d)
+        assert d % n_heads == 0, "d must split evenly"
+        self.h, self.d_head = n_heads, d // n_heads
+        self.Wq = nn.Linear(d, d)
+        self.Wk = nn.Linear(d, d)
+        self.Wv = nn.Linear(d, d)
         self.Wo = nn.Linear(d, d)
-    def _split(self, t):                      # (B, L, d) -> (B, h, L, d_head)
+
+    def split(self, t):
+        # (B, L, d) -> (B, h, L, d_head)
         B, L, _ = t.shape
-        return t.view(B, L, self.n_heads, self.d_head).transpose(1, 2)
+        return t.view(B, L, self.h, self.d_head).transpose(1, 2)
+
     def forward(self, x, mask=None, return_attn=False):
         B, L, d = x.shape
-        q, k, v = self._split(self.Wq(x)), self._split(self.Wk(x)), self._split(self.Wv(x))
-        ctx, w = attention(q, k, v, mask=mask)                # attend within every head
-        ctx = ctx.transpose(1, 2).contiguous().view(B, L, d)  # concat the heads back to width d
+        q = self.split(self.Wq(x))
+        k = self.split(self.Wk(x))
+        v = self.split(self.Wv(x))
+        ctx, w = attention(q, k, v, mask)   # every head at once
+        # concatenate the heads back to width d, then mix
+        ctx = ctx.transpose(1, 2).reshape(B, L, d)
         out = self.Wo(ctx)
         return (out, w) if return_attn else out
 
 torch.manual_seed(0)
 mha = MultiHeadSelfAttention(d=64, n_heads=4)
-x = torch.randn(1, 5, 64)                                     # one sequence of 5 tokens, width 64
+x = torch.randn(2, 7, 64)
 out, w = mha(x, return_attn=True)
-print("input shape:", tuple(x.shape), "-> output shape:", tuple(out.shape))
-print("attention weights shape:", tuple(w.shape), "= (batch, heads, query, key)")
-print("token 0, head 0 attends:", w[0, 0, 0].detach().numpy())
-print("token 0, head 1 attends:", w[0, 1, 0].detach().numpy())
+print("input", tuple(x.shape), "-> output", tuple(out.shape))
+print("weights", tuple(w.shape), "= (batch, head, query, key)")
+print("each head works on", mha.d_head, "of the 64 numbers")
 ```
 
 ~~~text
-input shape: (1, 5, 64) -> output shape: (1, 5, 64)
-attention weights shape: (1, 4, 5, 5) = (batch, heads, query, key)
-token 0, head 0 attends: [0.198 0.148 0.239 0.199 0.216]
-token 0, head 1 attends: [0.181 0.226 0.267 0.212 0.115]
+input (2, 7, 64) -> output (2, 7, 64)
+weights (2, 4, 7, 7) = (batch, head, query, key)
+each head works on 16 of the 64 numbers
 ~~~
 
-The output keeps the input shape `(1, 5, 64)`, but there are now **four** separate `5 x 5` attention
-matrices -- one per head -- and token 0 attends differently in head 0 than in head 1 (0.239 vs 0.267
-on its strongest position). Four heads, four views of the sequence, concatenated. PyTorch ships this
-as `nn.MultiheadAttention`; ours is the same computation unrolled.
+Is this the same computation as PyTorch's `nn.MultiheadAttention`? Copy our weights into it and
+compare the outputs. PyTorch stores the three input projections as one stacked matrix, `in_proj_weight`,
+with `Wq` on top, then `Wk`, then `Wv`:
 
-## Step 2: Positional Encoding
+```python
+ref = nn.MultiheadAttention(64, 4, batch_first=True)
+with torch.no_grad():
+    ref.in_proj_weight.copy_(torch.cat(
+        [mha.Wq.weight, mha.Wk.weight, mha.Wv.weight]))
+    ref.in_proj_bias.copy_(torch.cat(
+        [mha.Wq.bias, mha.Wk.bias, mha.Wv.bias]))
+    ref.out_proj.weight.copy_(mha.Wo.weight)
+    ref.out_proj.bias.copy_(mha.Wo.bias)
+    ref_out, ref_w = ref(x, x, x, average_attn_weights=False)
+print("outputs match nn.MultiheadAttention:",
+      torch.allclose(out, ref_out, atol=1e-6))
+print("weights match:", torch.allclose(w, ref_w, atol=1e-6))
+```
 
-Attention is a **set** operation -- it has no built-in notion of position. To give it one, add a
-**position signal** to each token embedding before the first block. The original Transformer uses fixed
-**sinusoidal** encodings: each dimension is a sine or cosine of the position at a different frequency,
-so every position gets a unique, smoothly varying fingerprint.
+~~~text
+outputs match nn.MultiheadAttention: True
+weights match: True
+~~~
+
+Both match to within `1e-6`, so our class computes what PyTorch's built-in computes; from here on you
+can read `nn.MultiheadAttention` as "the class above, written for speed".
+
+**What do the heads cost?** Each head works on `d/h` numbers, so the matrix products of four heads
+over 16 numbers add up to the same arithmetic as one head over 64. Memory is different: every head keeps
+its own `L x L` weight matrix. Measure it for one sequence of 1,024 tokens:
+
+```python
+xl = torch.randn(1, 1024, 64)
+for n_heads in [1, 4, 16]:
+    torch.manual_seed(0)
+    m = MultiHeadSelfAttention(64, n_heads)
+    with torch.no_grad():
+        _, wl = m(xl, return_attn=True)
+    mb = wl.nelement() * wl.element_size() / 2**20
+    print(f"{n_heads:2d} heads: weights {tuple(wl.shape)},"
+          f" {mb:5.1f} MB")
+```
+
+~~~text
+ 1 heads: weights (1, 1, 1024, 1024),   4.0 MB
+ 4 heads: weights (1, 4, 1024, 1024),  16.0 MB
+16 heads: weights (1, 16, 1024, 1024),  64.0 MB
+~~~
+
+The weights grow with the number of heads: `h` heads hold `h` matrices of `L x L` scores. That is L21's
+quadratic cost, multiplied by `h`.
+
+<details><summary>(Optional) Reading the code: <code>view</code> + <code>transpose</code>, <code>reshape</code>, <code>copy_</code></summary>
+
+**`t.view(B, L, self.h, self.d_head).transpose(1, 2)`.** `view` cuts each token's 64 numbers into 4
+groups of 16 without copying anything: `(B, L, 64)` becomes `(B, L, 4, 16)`. `transpose(1, 2)` swaps the
+length and head axes to give `(B, 4, L, 16)`, so the head axis sits next to the batch axis and `attention`
+runs every head of every sequence in one batched matrix product (L21's `@` with extra leading axes).
+
+**`ctx.transpose(1, 2).reshape(B, L, d)`** undoes the split: back to `(B, L, 4, 16)`, then the last two
+axes are glued into 64. After a `transpose` the numbers are no longer laid out in order in memory, so
+`view` would fail here; `reshape` copies when it has to.
+
+**`ref.in_proj_weight.copy_(...)`** writes our numbers into PyTorch's tensor in place. The trailing
+underscore marks an in-place operation in PyTorch; it runs inside `torch.no_grad()` because writing into a
+parameter must not be recorded for backpropagation.
+</details>
+
+### Step 2: Positional Encoding
+
+Attention treats its input as a set. To tell it where each token sits, add a **position signal** to
+each token's vector before the first block. The original Transformer uses fixed **sinusoidal**
+encodings: dimension pair `(2i, 2i+1)` holds the sine and cosine of the position at a frequency that
+falls geometrically with `i`. The concept page works out the first three positions with `d = 4` by
+hand; here they are, followed by the real size:
 
 ```python
 def sinusoidal_pos_encoding(max_len, d):
-    """Vaswani et al. position signal: sines/cosines of geometrically spaced frequencies."""
+    """Vaswani et al. (2017): sines and cosines of the
+    position at geometrically spaced frequencies."""
     pos = torch.arange(max_len).unsqueeze(1).float()
     i = torch.arange(0, d, 2).float()
-    div = torch.exp(-math.log(10000.0) * i / d)
+    freq = torch.exp(-math.log(10000.0) * i / d)
     pe = torch.zeros(max_len, d)
-    pe[:, 0::2] = torch.sin(pos * div)
-    pe[:, 1::2] = torch.cos(pos * div)
+    pe[:, 0::2] = torch.sin(pos * freq)
+    pe[:, 1::2] = torch.cos(pos * freq)
     return pe
 
+print("d = 4, positions 0, 1, 2 (concept page):")
+print(sinusoidal_pos_encoding(3, 4).numpy())
 pe = sinusoidal_pos_encoding(max_len=16, d=64)
-print("positional encoding shape:", tuple(pe.shape))
-print("PE[position 0, first 6 dims]:", pe[0, :6].numpy())
-print("PE[position 1, first 6 dims]:", pe[1, :6].numpy())
+print("PE for 16 positions, width 64:", tuple(pe.shape))
 
-same = torch.ones(1, 3, 64)                                  # three IDENTICAL token vectors
-print("without PE, positions 0,1,2 identical:",
-      bool(torch.allclose(same[0, 0], same[0, 1]) and torch.allclose(same[0, 1], same[0, 2])))
-withpe = same + pe[:3]
-print("with PE, position 0 vs 1 now differ:", bool(not torch.allclose(withpe[0, 0], withpe[0, 1])))
+same = torch.ones(3, 64)      # three IDENTICAL token vectors
+print("identical without PE:", torch.equal(same[0], same[1]))
+print("identical with PE:   ",
+      torch.equal((same + pe[:3])[0], (same + pe[:3])[1]))
 ```
 
 ~~~text
-positional encoding shape: (16, 64)
-PE[position 0, first 6 dims]: [0. 1. 0. 1. 0. 1.]
-PE[position 1, first 6 dims]: [0.841 0.54  0.682 0.732 0.533 0.846]
-without PE, positions 0,1,2 identical: True
-with PE, position 0 vs 1 now differ: True
+d = 4, positions 0, 1, 2 (concept page):
+[[ 0.     1.     0.     1.   ]
+ [ 0.841  0.54   0.01   1.   ]
+ [ 0.909 -0.416  0.02   1.   ]]
+PE for 16 positions, width 64: (16, 64)
+identical without PE: True
+identical with PE:    False
 ~~~
 
-Three identical token vectors are indistinguishable to attention -- until we add the positional
-encoding, after which positions 0 and 1 differ. That is the whole trick: position becomes part of the
-representation. The encoding matrix itself is a set of stacked waves:
+Without the encoding, three copies of the same token are indistinguishable, so attention would treat
+them identically wherever they sit; after adding it, each copy carries its position. The whole encoding
+matrix is a set of stacked waves:
 
 ```python
 plt.figure(figsize=(6, 3))
-plt.imshow(pe.numpy().T, aspect="auto", cmap="RdBu", vmin=-1, vmax=1)
+plt.imshow(pe.numpy().T, aspect="auto", cmap="RdBu_r",
+           vmin=-1, vmax=1, origin="lower")
 plt.xlabel("position"); plt.ylabel("encoding dimension")
-plt.title("sinusoidal positional encoding"); plt.colorbar(); plt.show()
+plt.title("sinusoidal positional encoding")
+plt.colorbar(); plt.show()
 ```
 
-Low dimensions oscillate fast (they separate neighbors); high dimensions oscillate slowly (they
-separate far-apart positions). Together they give every position a distinct code.
+The first dimensions oscillate fast and tell neighbors apart; the last ones change slowly and tell
+distant positions apart. Together they give every position a distinct code.
 
-## Step 3: The Transformer Encoder Block
+### Step 3: Layer Normalization
 
-Now the block that gets stacked. It is two sublayers, each wrapped the same way -- a **residual
-connection** (the L19 idea: add the input back, so each sublayer only has to learn a *change*) followed
-by **layer normalization** (new here: it standardizes each token across its features, unlike L17's
-batch-norm which standardized across the batch). The two sublayers are **multi-head self-attention**
-(mix information between positions) and a **position-wise feed-forward network** (an MLP applied to
-each position independently, for per-token nonlinearity):
+**Layer normalization** standardizes each token **across its own features**: subtract the token's mean,
+divide by its standard deviation. The concept page does it by hand for the token `[2, 4, 6, 8]`; compare
+with `nn.LayerNorm`:
+
+```python
+tok = torch.tensor([[2.0, 4.0, 6.0, 8.0]])
+mean = tok.mean()
+var = tok.var(unbiased=False)
+by_hand = (tok - mean) / torch.sqrt(var + 1e-5)
+ln = nn.LayerNorm(4)
+print(f"mean {mean.item():.1f}, variance {var.item():.1f}")
+print("by hand:     ", by_hand.numpy())
+print("nn.LayerNorm:", ln(tok).detach().numpy())
+```
+
+~~~text
+mean 5.0, variance 5.0
+by hand:      [[-1.342 -0.447  0.447  1.342]]
+nn.LayerNorm: [[-1.342 -0.447  0.447  1.342]]
+~~~
+
+`nn.LayerNorm` also has a learned scale and shift per feature (`ln.weight`, `ln.bias`), which start at
+1 and 0, so a fresh layer gives exactly the hand result. The small `1e-5` (PyTorch's `eps`) guards
+against dividing by zero.
+
+Now the difference from L17's **batch normalization**, which standardizes each feature **across the
+batch**. Normalize one sequence on its own, then the same sequence inside a batch of three:
+
+```python
+torch.manual_seed(0)
+X = torch.randn(3, 5, 4) * 3 + 7   # (batch, tokens, features)
+Y = ln(X).detach()
+print("per-token mean: largest |mean|",
+      f"{Y.mean(-1).abs().max().item():.3f}")
+print("per-token std:  from",
+      f"{Y.std(-1, unbiased=False).min().item():.3f} to",
+      f"{Y.std(-1, unbiased=False).max().item():.3f}")
+
+bn = nn.BatchNorm1d(4)   # normalizes each feature over the batch
+def bn_tokens(t):
+    return bn(t.transpose(1, 2)).transpose(1, 2)
+with torch.no_grad():
+    print("layer norm: sequence 0 alone == in the batch:",
+          torch.allclose(ln(X[:1]), ln(X)[:1]))
+    print("batch norm: sequence 0 alone == in the batch:",
+          torch.allclose(bn_tokens(X[:1]), bn_tokens(X)[:1]))
+```
+
+~~~text
+per-token mean: largest |mean| 0.000
+per-token std:  from 1.000 to 1.000
+layer norm: sequence 0 alone == in the batch: True
+batch norm: sequence 0 alone == in the batch: False
+~~~
+
+Every token comes out with mean 0 and standard deviation 1. Layer norm gives sequence 0 the same result
+alone or in a batch, because it never looks at the other sequences; batch norm (in training mode)
+does not, because its statistics come from whatever else is in the batch. That independence is why
+Transformers, which see sequences of different lengths in batches of any size, use layer norm.
+
+### Step 4: The Encoder Block
+
+The block wraps two sublayers the same way. **Multi-head self-attention** mixes information between
+positions; a **position-wise feed-forward network** (a two-layer MLP applied to each position on its
+own) transforms each position. Around each sublayer sit a **residual connection** (L19: add the input
+back) and a **layer norm**. The original Transformer normalizes *after* adding the residual, called
+**Post-LN**; GPT-2 and most later models normalize the sublayer's *input*, called **Pre-LN**. The class
+below does both, plus a switch that removes the residual, for the experiment in Step 6:
 
 ```python
 class EncoderBlock(nn.Module):
-    """multi-head self-attention -> Add & Norm -> position-wise feed-forward -> Add & Norm."""
-    def __init__(self, d, n_heads, d_ff):
+    """self-attention -> Add & Norm -> FFN -> Add & Norm."""
+    def __init__(self, d, n_heads, d_ff, norm_first=False,
+                 residual=True):
         super().__init__()
         self.attn = MultiHeadSelfAttention(d, n_heads)
         self.norm1 = nn.LayerNorm(d)
-        self.ff = nn.Sequential(nn.Linear(d, d_ff), nn.ReLU(), nn.Linear(d_ff, d))
+        self.ff = nn.Sequential(nn.Linear(d, d_ff), nn.ReLU(),
+                                nn.Linear(d_ff, d))
         self.norm2 = nn.LayerNorm(d)
+        self.norm_first = norm_first
+        # Step 6 switches the residual off (keep = 0)
+        self.keep = 1.0 if residual else 0.0
+
     def forward(self, x, mask=None):
-        x = self.norm1(x + self.attn(x, mask=mask))          # residual connection + layer norm
-        x = self.norm2(x + self.ff(x))                       # residual connection + layer norm
+        if self.norm_first:     # Pre-LN (GPT-2 and later)
+            x = self.keep * x + self.attn(self.norm1(x), mask)
+            x = self.keep * x + self.ff(self.norm2(x))
+        else:                   # Post-LN (the 2017 paper)
+            x = self.norm1(self.keep * x + self.attn(x, mask))
+            x = self.norm2(self.keep * x + self.ff(x))
         return x
 
 torch.manual_seed(0)
 block = EncoderBlock(d=64, n_heads=4, d_ff=128)
 h = block(torch.randn(2, 12, 64))
-print("block input shape: (2, 12, 64) -> output shape:", tuple(h.shape))
+print("block: (2, 12, 64) ->", tuple(h.shape))
 ```
 
 ~~~text
-block input shape: (2, 12, 64) -> output shape: (2, 12, 64)
+block: (2, 12, 64) -> (2, 12, 64)
 ~~~
 
-A block maps a sequence to a same-shape sequence, so blocks stack cleanly. `nn.TransformerEncoderLayer`
-is exactly this block, production-tuned.
+A block maps a sequence to a sequence of the same shape, so blocks stack.
 
 ```python
-# Your turn (warm-up): the block has 4 attention projections Linear(64,64), two LayerNorm(64), and a
-# feed-forward Linear(64,128) + Linear(128,64). Predict its total parameter count, then check.
+# Your turn (warm-up): the block has 4 projections Linear(64, 64),
+# two LayerNorm(64), and a feed-forward Linear(64, 128) +
+# Linear(128, 64). Predict its parameter count, then check.
 # Uncomment and fill the blank:
-# print("block parameters:", sum(p.numel() for p in block.parameters()))   # expect ____
+# n = sum(p.numel() for p in block.parameters())
+# print("block parameters:", n)   # expect ____
 ```
 
-The block has **33,472** parameters: `4 * (64*64 + 64) = 16,640` for the attention projections,
-`(64*128 + 128) + (128*64 + 64) = 16,576` for the feed-forward network, and `2 * (2*64) = 256` for the
-two layer norms. Most of a Transformer's weight is in exactly these two sublayers.
+The block has **33,472** parameters: `4 * (64*64 + 64) = 16,640` in the attention projections,
+`(64*128 + 128) + (128*64 + 64) = 16,576` in the feed-forward network, and `2 * (2*64) = 256` in the two
+layer norms (a scale and a shift per feature). The two sublayers hold almost all of it, in nearly equal
+parts.
 
-## Step 4: Build the Transformer and Train It on Order
+PyTorch's `nn.TransformerEncoderLayer` is the same block. With dropout off and our weights copied in, it
+gives the same output:
 
-Here is the payoff. The task: each sequence is a `CLS` token (position 0) followed by filler tokens,
-with exactly one marker **A** and one marker **B** dropped at two random positions. The label is
-**1 if A comes before B**, else 0. Crucially, the *multiset* of tokens is identical either way -- only
-the **order** distinguishes the classes -- so a model with no sense of position is provably stuck at
-chance (0.50).
+```python
+tel = nn.TransformerEncoderLayer(64, 4, 128, dropout=0.0,
+                                 batch_first=True)
+a = block.attn
+with torch.no_grad():
+    sa = tel.self_attn
+    sa.in_proj_weight.copy_(torch.cat(
+        [a.Wq.weight, a.Wk.weight, a.Wv.weight]))
+    sa.in_proj_bias.copy_(torch.cat(
+        [a.Wq.bias, a.Wk.bias, a.Wv.bias]))
+    sa.out_proj.weight.copy_(a.Wo.weight)
+    sa.out_proj.bias.copy_(a.Wo.bias)
+    for ours, theirs in [(block.ff[0], tel.linear1),
+                         (block.ff[2], tel.linear2),
+                         (block.norm1, tel.norm1),
+                         (block.norm2, tel.norm2)]:
+        theirs.weight.copy_(ours.weight)
+        theirs.bias.copy_(ours.bias)
+    x2 = torch.randn(2, 12, 64)
+    diff = (block(x2) - tel.eval()(x2)).abs().max().item()
+print("largest difference from nn.TransformerEncoderLayer:",
+      f"{diff:.1e}")
+print("same parameter count:",
+      sum(p.numel() for p in tel.parameters()))
+```
+
+~~~text
+largest difference from nn.TransformerEncoderLayer: 0.0e+00
+same parameter count: 33472
+~~~
+
+Its `norm_first=True` option switches it to Pre-LN, like ours.
+
+### Step 5: Train a Transformer on Order
+
+Now a task where order is the **only** signal. Each sequence is a `CLS` token at position 0 followed
+by filler tokens, with one marker **A** and one marker **B** at two random positions. The label is **1 if
+A comes before B**. Both classes contain exactly the same tokens; only their order differs. The
+classifier reads its answer from the `CLS` position, like BERT.
 
 ```python
 def make_order_dataset(n, seq_len=12, vocab=10, seed=0):
-    """'Does marker A come before marker B?' CLS at position 0; one A (token 1) and one B (token 2)
-    at two distinct random positions; fillers elsewhere. label = 1 if pos(A) < pos(B) else 0.
-    The token MULTISET is identical either way, so order is the ONLY signal."""
+    """'Does A come before B?' CLS at position 0, one A
+    (token 1) and one B (token 2) at two random positions,
+    fillers (3..9) elsewhere. The token MULTISET is the same
+    either way, so order is the only signal."""
     g = torch.Generator().manual_seed(seed)
     CLS, A, B = 0, 1, 2
     x = torch.zeros(n, seq_len, dtype=torch.long)
     y = torch.zeros(n, dtype=torch.long)
     for i in range(n):
-        seq = torch.randint(3, vocab, (seq_len,), generator=g)   # fillers
+        seq = torch.randint(3, vocab, (seq_len,), generator=g)
         seq[0] = CLS
-        p = torch.randperm(seq_len - 1, generator=g)[:2] + 1      # two distinct content positions
+        p = torch.randperm(seq_len - 1, generator=g)[:2] + 1
         pa, pb = p[0].item(), p[1].item()
-        seq[pa] = A; seq[pb] = B
+        seq[pa], seq[pb] = A, B
         x[i] = seq
         y[i] = 1 if pa < pb else 0
     return x, y
 
 xtr, ytr = make_order_dataset(4000, seed=0)
 xte, yte = make_order_dataset(1000, seed=1)
-print("train", tuple(xtr.shape), "test", tuple(xte.shape), "| label balance (test):",
-      round(yte.float().mean().item(), 3))
-print("example 0:", xtr[0].tolist(), "-> A before B? y =", ytr[0].item())
+print("train", tuple(xtr.shape), "| test", tuple(xte.shape))
+print("example 0:", xtr[0].tolist(), "-> y =", ytr[0].item())
+print("test share of label 1:",
+      f"{yte.float().mean().item():.3f}")
+xtr, ytr = xtr.to(device), ytr.to(device)
+xte, yte = xte.to(device), yte.to(device)
 ```
 
 ~~~text
-train (4000, 12) test (1000, 12) | label balance (test): 0.517
-example 0: [0, 6, 3, 1, 4, 5, 9, 6, 7, 8, 5, 2] -> A before B? y = 1
+train (4000, 12) | test (1000, 12)
+example 0: [0, 6, 3, 1, 4, 5, 9, 6, 7, 8, 5, 2] -> y = 1
+test share of label 1: 0.517
 ~~~
 
-In example 0 the marker `1` (A) sits at position 3 and `2` (B) at position 11, so A is before B and
-the label is 1. The full model is a token embedding, an optional positional encoding, a stack of
-encoder blocks, and a classifier reading from the `CLS` position. We train it twice -- once **without**
-positional encoding, once **with** -- changing nothing else:
+In example 0, A (token `1`) sits at position 3 and B (token `2`) at position 11, so the label is 1. In the
+test set 51.7% of the labels are 1, so a model that always answers 1 scores 0.517: that is the bar for
+"learned nothing". The model is a token embedding, an optional position signal, a stack of encoder
+blocks, and a linear classifier on the `CLS` position:
 
 ```python
 class TinyTransformer(nn.Module):
-    def __init__(self, vocab, d=64, n_heads=4, n_blocks=2, d_ff=128, max_len=16,
-                 pos_mode="sinusoidal"):
+    def __init__(self, vocab=10, d=64, n_heads=4, n_blocks=2,
+                 d_ff=128, max_len=16, pos_mode="sinusoidal",
+                 norm_first=False, residual=True):
         super().__init__()
         self.pos_mode = pos_mode
         self.tok_emb = nn.Embedding(vocab, d)
         if pos_mode == "sinusoidal":
-            self.register_buffer("pe", sinusoidal_pos_encoding(max_len, d))
+            self.register_buffer(
+                "pe", sinusoidal_pos_encoding(max_len, d))
         elif pos_mode == "learned":
             self.pos_emb = nn.Embedding(max_len, d)
-        self.blocks = nn.ModuleList([EncoderBlock(d, n_heads, d_ff) for _ in range(n_blocks)])
+        self.blocks = nn.ModuleList(
+            [EncoderBlock(d, n_heads, d_ff, norm_first, residual)
+             for _ in range(n_blocks)])
         self.head = nn.Linear(d, 2)
-    def forward(self, x):
+
+    def embed(self, x):
+        """token vectors plus the position signal"""
         L = x.shape[1]
         h = self.tok_emb(x)
         if self.pos_mode == "sinusoidal":
             h = h + self.pe[:L]
         elif self.pos_mode == "learned":
-            h = h + self.pos_emb(torch.arange(L))
+            h = h + self.pos_emb(torch.arange(L, device=x.device))
+        return h
+
+    def forward(self, x):
+        h = self.embed(x)
         for blk in self.blocks:
             h = blk(h)
-        return self.head(h[:, 0])                            # classify from the CLS position
+        return self.head(h[:, 0])        # read out at CLS
 
-def train(model, xtr, ytr, xte, yte, epochs=15, bs=256):
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3); loss_fn = nn.CrossEntropyLoss()
-    n = len(ytr)
+def train(model, epochs=15, bs=256, lr=1e-3):
+    """Adam + cross-entropy on the order task -> test acc."""
+    model.to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_fn = nn.CrossEntropyLoss()
     for epoch in range(epochs):
         g = torch.Generator().manual_seed(epoch)
-        perm = torch.randperm(n, generator=g)
+        perm = torch.randperm(len(ytr), generator=g)
         model.train()
-        for s in range(0, n, bs):
+        for s in range(0, len(ytr), bs):
             b = perm[s:s + bs]
-            opt.zero_grad(); loss_fn(model(xtr[b]), ytr[b]).backward(); opt.step()
+            opt.zero_grad()
+            loss_fn(model(xtr[b]), ytr[b]).backward()
+            opt.step()
     model.eval()
     with torch.no_grad():
-        return (model(xte).argmax(1) == yte).float().mean().item()
+        pred = model(xte).argmax(1)
+    return (pred == yte).float().mean().item()
 
 torch.manual_seed(0)
-no_pos = TinyTransformer(vocab=10, pos_mode="none")
-acc_no = train(no_pos, xtr, ytr, xte, yte)
+no_pos = TinyTransformer(pos_mode="none")
+acc_no = train(no_pos)
 torch.manual_seed(0)
-with_pos = TinyTransformer(vocab=10, pos_mode="sinusoidal")
-acc_pe = train(with_pos, xtr, ytr, xte, yte)
-print(f"NO positional encoding:   {acc_no:.4f}   (chance = 0.5)")
+with_pos = TinyTransformer(pos_mode="sinusoidal")
+acc_pe = train(with_pos)
+print(f"always answer 1:          {yte.float().mean().item():.4f}")
+print(f"NO positional encoding:   {acc_no:.4f}")
 print(f"WITH positional encoding: {acc_pe:.4f}")
 ```
 
 ~~~text
-NO positional encoding:   0.4800   (chance = 0.5)
+always answer 1:          0.5170
+NO positional encoding:   0.4810
 WITH positional encoding: 1.0000
 ~~~
 
-The same architecture, the same data, the same training -- yet without positional encoding the model
-is **at chance**, and with it the model is **perfect**. Position was the whole difference. We can show
-*why* the no-position model fails: it is order-blind, so shuffling the tokens leaves its prediction
-exactly unchanged.
+<details><summary>(Optional) Reading the code: <code>register_buffer</code>, <code>nn.ModuleList</code></summary>
+
+**`self.register_buffer("pe", ...)`** stores a tensor in the module without making it a parameter:
+it moves with `model.to(device)` and is saved with the model, but Adam never updates it. The sinusoidal
+encoding is fixed, so it is a buffer; the learned encoding (`nn.Embedding`) is a parameter.
+
+**`nn.ModuleList([...])`** holds a list of layers so that PyTorch sees their parameters. A plain Python
+list of blocks would train nothing: `model.parameters()` would not find them.
+</details>
+
+Same architecture, same data, same training. Without positional encoding the model scores 0.4810, no
+better than always answering 1 (the exact figure varies a little between machines: 0.478 to 0.481 in our
+tests); with it, the model is perfect. Shuffle the positions of one test sequence (keeping `CLS` first) and look at the logits:
 
 ```python
 torch.manual_seed(1)
-perm = torch.cat([torch.tensor([0]), torch.randperm(11) + 1])   # keep CLS at 0, shuffle the rest
+perm = torch.cat([torch.tensor([0]), torch.randperm(11) + 1])
 with torch.no_grad():
-    a, b = no_pos(xte[:1]), no_pos(xte[:1, perm])
-    c, d = with_pos(xte[:1]), with_pos(xte[:1, perm])
-print("no-PE  logits identical after shuffling positions:", bool(torch.allclose(a, b, atol=1e-5)))
-print("PE     logits identical after shuffling positions:", bool(torch.allclose(c, d, atol=1e-5)))
+    a, a_shuf = no_pos(xte[:1]), no_pos(xte[:1, perm])
+    c, c_shuf = with_pos(xte[:1]), with_pos(xte[:1, perm])
+print("no-PE logits unchanged by the shuffle:",
+      torch.allclose(a, a_shuf, atol=1e-5))
+print("PE logits unchanged by the shuffle:   ",
+      torch.allclose(c, c_shuf, atol=1e-5))
 ```
 
 ~~~text
-no-PE  logits identical after shuffling positions: True
-PE     logits identical after shuffling positions: False
+no-PE logits unchanged by the shuffle: True
+PE logits unchanged by the shuffle:    False
 ~~~
 
-The no-position model gives **bit-identical** logits whether or not we shuffle -- it literally cannot
-see order, so it can never tell A-before-B from B-before-A. Adding positional encoding breaks that
-symmetry, and the task becomes solvable. That is the Transformer in one experiment: attention for
-reach, position for order, blocks to stack it deep.
+The model without positions gives the same logits however the tokens are arranged (up to rounding):
+self-attention is permutation-equivariant (L21), and the `CLS` readout ignores where the others sit, so
+"A before B" and "B before A" look identical to it. Adding the position signal breaks that symmetry.
+
+**What do the trained heads do?** For the `CLS` query of the last block, average each head's attention
+weight on the A position and on the B position over the 1,000 test sequences:
+
+```python
+@torch.no_grad()
+def attention_maps(model, x):
+    """each block's attention weights, (n, head, L, L)"""
+    model.eval()
+    h, maps = model.embed(x), []
+    for blk in model.blocks:
+        _, w = blk.attn(h, return_attn=True)
+        maps.append(w.cpu())
+        h = blk(h)
+    return maps
+
+w_last = attention_maps(with_pos, xte)[-1]
+cls_row = w_last[:, :, 0, :]              # (n, head, key)
+xc = xte.cpu()
+on_a = (cls_row * (xc == 1)[:, None, :]).sum(-1).mean(0)
+on_b = (cls_row * (xc == 2)[:, None, :]).sum(-1).mean(0)
+print("CLS query, last block -- average weight")
+print("head   on A    on B")
+for k in range(4):
+    print(f"{k:4d}  {on_a[k].item():5.3f}  {on_b[k].item():5.3f}")
+
+fig, axes = plt.subplots(4, 1, figsize=(7, 4.2), sharex=True)
+toks = ["CLS" if t == 0 else "A" if t == 1 else "B" if t == 2
+        else str(t) for t in xc[0].tolist()]
+for k, ax in enumerate(axes):
+    ax.imshow(cls_row[0, k][None].numpy(), cmap="Blues",
+              vmin=0, vmax=1, aspect="auto")
+    ax.set_yticks([0]); ax.set_yticklabels([f"head {k}"])
+axes[-1].set_xticks(range(12)); axes[-1].set_xticklabels(toks)
+fig.suptitle("CLS attention in the last block, test sequence 0")
+plt.tight_layout(); plt.show()
+```
+
+~~~text
+CLS query, last block -- average weight
+head   on A    on B
+   0  0.998  0.000
+   1  0.002  0.972
+   2  0.055  0.364
+   3  0.338  0.558
+~~~
+
+The heads are not copies of each other. Averaged over the test set, head 0 puts 0.998 of the `CLS`
+token's attention on A and head 1 puts 0.972 on B: the two facts the answer depends on, each found by
+its own head. Heads 2 and 3 spread their weight more (head 3 leans toward B). The plot shows one test
+sequence, where B comes before A (label 0): head 0 sits on A, heads 1 and 3 on B. These roles depend on
+the random start. Retrained with other seeds, the division of labor changes; in one of our runs, no
+head of the last block looked at B (three of them read A), presumably because an earlier block had
+already moved B's information into the vectors the last block reads. What stays is that trained heads take sharp, different jobs.
+
+### Step 6: Depth -- the Residual and Where the Norm Goes
+
+Real Transformers stack dozens of blocks. Train the same order task at two depths: 6 blocks with and
+without the residual connection, and 12 blocks with Post-LN and with Pre-LN. Nothing else changes (Adam,
+learning rate 0.001, 15 epochs):
+
+```python
+runs = [(6, "Post-LN + residual", False, True),
+        (6, "Post-LN, NO residual", False, False),
+        (12, "Post-LN + residual", False, True),
+        (12, "Pre-LN + residual", True, True)]
+print("blocks  variant                test acc")
+for n_blocks, name, norm_first, residual in runs:
+    torch.manual_seed(0)
+    m = TinyTransformer(n_blocks=n_blocks, norm_first=norm_first,
+                        residual=residual)
+    print(f"{n_blocks:6d}  {name:21s}  {train(m):.4f}")
+```
+
+~~~text
+blocks  variant                test acc
+     6  Post-LN + residual     1.0000
+     6  Post-LN, NO residual   0.4830
+    12  Post-LN + residual     0.4830
+    12  Pre-LN + residual      1.0000
+~~~
+
+**0.4830 is the share of label 0 in the test set**: those models answer 0 for every one of the 1,000
+sequences. They never got started. With 6 blocks, the residual connection is the whole difference
+between a perfect model and a stuck one: it gives every block a direct path from input to output, so
+the signal and the gradient do not have to pass through six freshly initialized sublayers in a row.
+At 12 blocks the residual is not enough for Post-LN, while Pre-LN learns the task perfectly. In our
+tests with seeds 0, 1 and 2, the 12-block Post-LN model was stuck in two runs of three (the third
+reached 0.968) and Pre-LN reached 1.0000 in all three; the 6-block model without a residual was stuck
+in all three. Post-LN is not broken: the 2017 paper trained it with a learning-rate **warm-up**, and
+Exercise 2 shows that this rescues it. Pre-LN does not need one; most models since GPT-2 put the norm
+first.
+
+## Part B -- Real Text: IMDB Reviews
+
+### Step 7: A Transformer Encoder for Sentiment, With and Without Position
+
+L21 trained three sentiment classifiers on 25,000 IMDB reviews. The best was the cheapest, a bag of
+embeddings (0.8662), ahead of self-attention (0.8514), and both order-blind models (the bag and
+self-attention) gave the two same-word sentences identical scores; only the CNN, which reads 5-word
+windows, told them apart. Does a Transformer with positional encoding do better? The data pipeline is L21's,
+unchanged: the same pinned download (two Parquet files of about 21 MB from the Hugging Face Hub; the
+dataset card lists the licence as "other" without further terms, so cite Maas et al., 2011, and treat
+the reviews, written by IMDb users, as material for study, not for redistribution), the same word
+tokenizer and 20,000-word vocabulary, reviews cut at 256 words, and the same 10,000-review test sample.
+
+```python
+REV = "e6281661ce1c48d982bc483cf8a173c1bbeb5d31"
+BASE = ("https://huggingface.co/datasets/stanfordnlp/imdb/"
+        f"resolve/{REV}/plain_text/")
+imdb_dir = Path("data/imdb")
+imdb_dir.mkdir(parents=True, exist_ok=True)
+for split in ["train", "test"]:
+    f = imdb_dir / f"{split}.parquet"
+    if not f.exists():
+        urlretrieve(BASE + f"{split}-00000-of-00001.parquet", f)
+train_df = pd.read_parquet(imdb_dir / "train.parquet")
+test_df = pd.read_parquet(imdb_dir / "test.parquet")
+
+VOCAB, MAX_LEN = 20000, 256
+
+def tokenize(text):
+    text = text.lower().replace("<br />", " ")
+    return re.findall(r"[a-z']+", text)
+
+counts = collections.Counter(
+    w for t in train_df["text"] for w in tokenize(t))
+itos = ["<pad>", "<unk>"] + [
+    w for w, _ in counts.most_common(VOCAB - 2)]
+stoi = {w: i for i, w in enumerate(itos)}
+
+def encode(texts, max_len=MAX_LEN):
+    """Texts -> (n, max_len) word ids, 0-padded."""
+    X = torch.zeros(len(texts), max_len, dtype=torch.long)
+    for i, t in enumerate(texts):
+        ids = [stoi.get(w, 1) for w in tokenize(t)][:max_len]
+        X[i, :len(ids)] = torch.tensor(ids)
+    return X
+
+test_sub = test_df.sample(frac=1, random_state=1).iloc[:10000]
+train_sh = train_df.sample(frac=1, random_state=0)
+Xtr_txt = encode(train_sh["text"])
+ytr_txt = torch.tensor(train_sh["label"].values)
+Xte_txt = encode(test_sub["text"])
+yte_txt = torch.tensor(test_sub["label"].values)
+print("Xtr_txt", tuple(Xtr_txt.shape), "| Xte_txt",
+      tuple(Xte_txt.shape))
+```
+
+~~~text
+Xtr_txt (25000, 256) | Xte_txt (10000, 256)
+~~~
+
+The classifier puts a `CLS` token in front of every review (a new id, 20,000, after the vocabulary),
+adds the position signal, runs two encoder blocks with a **padding mask** (shape `(B, 1, 1, L)`: no query
+may attend to a padded key), and reads the answer from `CLS`. We train it twice, without and with
+sinusoidal positional encoding:
+
+```python
+CLS_ID = VOCAB
+
+class TextTransformer(nn.Module):
+    def __init__(self, pos_mode, d=64, n_heads=4, n_blocks=2,
+                 d_ff=128, max_len=MAX_LEN + 1):
+        super().__init__()
+        self.pos_mode = pos_mode
+        self.emb = nn.Embedding(VOCAB + 1, d, padding_idx=0)
+        if pos_mode == "sinusoidal":
+            self.register_buffer(
+                "pe", sinusoidal_pos_encoding(max_len, d))
+        self.blocks = nn.ModuleList(
+            [EncoderBlock(d, n_heads, d_ff)
+             for _ in range(n_blocks)])
+        self.out = nn.Linear(d, 2)
+
+    def forward(self, x):
+        cls = torch.full((len(x), 1), CLS_ID, device=x.device)
+        x = torch.cat([cls, x], 1)
+        mask = (x != 0)[:, None, None, :]   # (B, 1, 1, L)
+        h = self.emb(x)
+        if self.pos_mode == "sinusoidal":
+            h = h + self.pe[:x.shape[1]]
+        for blk in self.blocks:
+            h = blk(h, mask)
+        return self.out(h[:, 0])
+
+def fit_text(model, epochs=5, bs=64):
+    """Adam + cross-entropy on (Xtr_txt, ytr_txt)."""
+    model.to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_fn = nn.CrossEntropyLoss()
+    for epoch in range(epochs):
+        g = torch.Generator().manual_seed(epoch)
+        perm = torch.randperm(len(ytr_txt), generator=g)
+        model.train()
+        for s in range(0, len(ytr_txt), bs):
+            b = perm[s:s + bs]
+            opt.zero_grad()
+            logits = model(Xtr_txt[b].to(device))
+            loss_fn(logits, ytr_txt[b].to(device)).backward()
+            opt.step()
+    return model
+
+@torch.no_grad()
+def predict_proba(model, X, bs=500):
+    """P(positive) for every row of X."""
+    model.eval()
+    out = [model(X[s:s + bs].to(device)).softmax(-1)[:, 1]
+           for s in range(0, len(X), bs)]
+    return torch.cat(out).cpu()
+
+text_models = {}
+for name in ["none", "sinusoidal"]:
+    torch.manual_seed(0)
+    text_models[name] = fit_text(TextTransformer(name))
+
+print(f"{'positional encoding':20s} {'params':>9} {'test acc':>9}")
+for name, model in text_models.items():
+    n_par = sum(p.numel() for p in model.parameters())
+    pred = (predict_proba(model, Xte_txt) > 0.5).long()
+    acc = (pred == yte_txt).float().mean().item()
+    print(f"{name:20s} {n_par:>9,} {acc:>9.4f}")
+```
+
+~~~text
+positional encoding     params  test acc
+none                 1,347,138    0.8483
+sinusoidal           1,347,138    0.8483
+~~~
+
+Positional encoding changes nothing measurable here: both models score 0.8483 on the 10,000 test
+reviews (with other seeds and on other machines, the version with positions scored the same or lower,
+by up to about 0.016, never higher). Both sit a little below L21's bag of embeddings
+(0.8662), which trained in seconds; each Transformer takes about a minute on a T4.
+
+Now the question L21 left open. Eight pairs of sentences, each pair made of exactly the same words;
+`sign` says which sentence of the pair is the more positive one (+1: the first):
+
+```python
+pairs = [
+    ("this movie is not bad , it is good",
+     "this movie is not good , it is bad", +1),
+    ("the acting was not great , it was terrible",
+     "the acting was not terrible , it was great", -1),
+    ("i expected a bad film but it was a great film",
+     "i expected a great film but it was a bad film", +1),
+    ("the story is boring but the ending is wonderful",
+     "the story is wonderful but the ending is boring", +1),
+    ("not a good movie , a bad one",
+     "not a bad movie , a good one", -1),
+    ("i thought it would be awful , it was excellent",
+     "i thought it would be excellent , it was awful", +1),
+    ("the first half is bad , the rest is brilliant",
+     "the first half is brilliant , the rest is bad", +1),
+    ("never boring , always fun",
+     "never fun , always boring", +1)]
+first = [p[0] for p in pairs]
+second = [p[1] for p in pairs]
+print(f"{'first sentence of the pair':34s}"
+      "   no PE: 1st   2nd |   PE: 1st   2nd")
+right = 0
+for i, (s1, _, sign) in enumerate(pairs):
+    p = {}
+    for name, model in text_models.items():
+        pr = predict_proba(model, encode([first[i], second[i]]))
+        p[name] = pr.tolist()
+    gap = p["sinusoidal"][0] - p["sinusoidal"][1]
+    right += int(gap * sign > 0)
+    print(f"{s1[:34]:34s}   {p['none'][0]:8.3f} {p['none'][1]:5.3f}"
+          f" | {p['sinusoidal'][0]:7.3f} {p['sinusoidal'][1]:5.3f}")
+print(f"PE: the more positive sentence scored higher in {right}/8")
+```
+
+~~~text
+first sentence of the pair           no PE: 1st   2nd |   PE: 1st   2nd
+this movie is not bad , it is good      0.008 0.008 |   0.023 0.011
+the acting was not great , it was       0.047 0.047 |   0.024 0.025
+i expected a bad film but it was a      0.906 0.906 |   0.601 0.472
+the story is boring but the ending      0.014 0.014 |   0.072 0.023
+not a good movie , a bad one            0.005 0.005 |   0.004 0.005
+i thought it would be awful , it w      0.249 0.249 |   0.957 0.976
+the first half is bad , the rest i      0.015 0.015 |   0.015 0.013
+never boring , always fun               0.983 0.983 |   0.997 0.997
+PE: the more positive sentence scored higher in 6/8
+~~~
+
+Without positional encoding, the two sentences of each pair get **identical** scores, as in L21: same
+words, same answer. With it, every pair gets two different scores, so the model can now tell the two
+orders apart. But it has not learned what the order *means*. The more positive sentence scored higher in
+6 of the 8 pairs (in our runs with other seeds and on a GPU, anywhere from 2 to 7 of 8), most
+differences are tiny (0.024 against 0.025), and in only one pair do the two sentences land on opposite sides of 0.5 (0.601 / 0.472). Both
+"this movie is not bad, it is good" and its twin are still called negative.
+
+The reason is the training signal. A review's label is decided mostly by *which* words it contains
+(that is why L21's bag of embeddings won), so nothing in 25,000 labeled reviews pushes the model to
+use the positions it is given. **Positional encoding makes order available; the training objective
+decides whether the model uses it.** Step 8 uses an objective that cannot be met without order.
+
+### Step 8: A Tiny GPT on Review Text
+
+A classifier trained on 25,000 labels has little reason to learn word order. A **language model** has
+every reason: its task is to predict the **next** symbol, at every position, and the next symbol depends
+on what came before and in what order. Here is a tiny one, GPT-style: it reads review text one
+**character** at a time (no word vocabulary needed), and learns from the first 4,000 training reviews.
+
+```python
+raw = " ".join(train_df["text"].iloc[:4000])
+text = re.sub(r"[^a-z0-9 .,!?'\-]", "",
+              raw.lower().replace("<br />", " "))
+text = re.sub(r" +", " ", text)
+chars = sorted(set(text))
+ch2id = {c: i for i, c in enumerate(chars)}
+data = torch.tensor([ch2id[c] for c in text])
+n_tr = int(0.9 * len(data))
+train_ids, val_ids = data[:n_tr], data[n_tr:]
+print(f"{len(text):,} characters, {len(chars)} distinct:",
+      "".join(chars))
+print("train", len(train_ids), "| validation", len(val_ids))
+```
+
+~~~text
+5,026,211 characters, 43 distinct:  !',-.0123456789?abcdefghijklmnopqrstuvwxyz
+train 4523589 | validation 502622
+~~~
+
+The model is a **decoder**: token and learned position embeddings, a stack of Pre-LN blocks whose
+self-attention carries a **causal mask** (position `i` may attend to positions `0..i` only), a final
+layer norm, and a linear layer that turns every position's vector into scores over the 43 characters.
+Each training window of 64 characters gives 64 next-character examples at once: position `i` must
+predict character `i + 1`.
+
+```python
+CTX = 64
+
+class TinyGPT(nn.Module):
+    def __init__(self, vocab, d=128, n_heads=4, n_blocks=4,
+                 d_ff=512, causal=True):
+        super().__init__()
+        self.causal = causal
+        self.tok_emb = nn.Embedding(vocab, d)
+        self.pos_emb = nn.Embedding(CTX, d)
+        self.blocks = nn.ModuleList(
+            [EncoderBlock(d, n_heads, d_ff, norm_first=True)
+             for _ in range(n_blocks)])
+        self.norm = nn.LayerNorm(d)
+        self.out = nn.Linear(d, vocab)
+
+    def forward(self, x, causal=None):
+        causal = self.causal if causal is None else causal
+        L = x.shape[1]
+        mask = None
+        if causal:   # lower triangle: True = may attend
+            mask = torch.tril(torch.ones(L, L, dtype=torch.bool,
+                                         device=x.device))
+        pos = torch.arange(L, device=x.device)
+        h = self.tok_emb(x) + self.pos_emb(pos)
+        for blk in self.blocks:
+            h = blk(h, mask)
+        return self.out(self.norm(h))   # (B, L, vocab)
+
+def get_batch(ids, bs, g):
+    """bs random windows; y is x shifted by one character"""
+    starts = torch.randint(len(ids) - CTX - 1, (bs,), generator=g)
+    x = torch.stack([ids[s:s + CTX] for s in starts])
+    y = torch.stack([ids[s + 1:s + CTX + 1] for s in starts])
+    return x.to(device), y.to(device)
+
+@torch.no_grad()
+def val_loss(model, causal):
+    """mean next-character cross-entropy on validation"""
+    model.eval()
+    g = torch.Generator().manual_seed(123)
+    losses = []
+    for _ in range(20):
+        x, y = get_batch(val_ids, 128, g)
+        logits = model(x, causal=causal)
+        losses.append(F.cross_entropy(
+            logits.flatten(0, 1), y.flatten()).item())
+    return sum(losses) / len(losses)
+
+def train_gpt(causal, steps=1500, bs=64):
+    torch.manual_seed(0)
+    model = TinyGPT(len(chars), causal=causal).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    g = torch.Generator().manual_seed(0)
+    model.train()
+    for step in range(steps):
+        x, y = get_batch(train_ids, bs, g)
+        loss = F.cross_entropy(model(x).flatten(0, 1),
+                               y.flatten())
+        opt.zero_grad(); loss.backward(); opt.step()
+    return model
+
+gpt = train_gpt(causal=True)
+print(f"parameters: {sum(p.numel() for p in gpt.parameters()):,}")
+print(f"validation loss: {val_loss(gpt, causal=True):.3f}"
+      f"   (uniform guess: ln {len(chars)} ="
+      f" {math.log(len(chars)):.3f})")
+```
+
+~~~text
+parameters: 812,587
+validation loss: 1.544   (uniform guess: ln 43 = 3.761)
+~~~
+
+A loss of 1.544 is far below the 3.761 of a uniform guess over 43 characters. Now **generate**: start from a
+prompt, predict the next character, sample it, append it, and repeat. The model only ever sees the past,
+which is exactly what it was trained for:
+
+```python
+@torch.no_grad()
+def generate(model, prompt, n=200, temperature=0.8, seed=0):
+    model.eval()
+    g = torch.Generator(device=device).manual_seed(seed)
+    ids = torch.tensor([[ch2id[c] for c in prompt]],
+                       device=device)
+    for _ in range(n):
+        logits = model(ids[:, -CTX:], causal=True)[:, -1]
+        probs = (logits / temperature).softmax(-1)
+        nxt = torch.multinomial(probs, 1, generator=g)
+        ids = torch.cat([ids, nxt], 1)
+    return "".join(chars[i] for i in ids[0].tolist())
+
+print(textwrap.fill(generate(gpt, "this movie was "), 72))
+```
+
+~~~text
+this movie was a movie, but i hanted, a luche manet and to people ending
+it was ever to do get enough. forest this movie is that it it patching
+it thrily the girls they away their isney attenting for than belied fla
+~~~
+
+It is not English, but it is built like English: real words (*movie*, *people*, *ending*, *enough*,
+*girls*), spaces and commas in plausible places, fragments of review phrasing ("this movie is that"),
+all learned from characters alone, in about 20 seconds on a T4. On a GPU or another machine your
+text will be different: compare its character, not its words. A real GPT is the same kind of model,
+thousands of times larger, reading subword tokens, and trained on vastly more text.
+
+<details><summary>(Optional) Reading the code: <code>torch.tril</code>, <code>flatten(0, 1)</code>, <code>torch.multinomial</code></summary>
+
+**`torch.tril(torch.ones(L, L, dtype=torch.bool))`** keeps the lower triangle (row `i`, columns `0..i`)
+and sets everything above the diagonal to `False`. The `(L, L)` mask broadcasts over the batch and the
+heads, so one mask serves every sequence. With L21's padding mask it shares one rule: `False` scores
+become minus infinity before the softmax.
+
+**`logits.flatten(0, 1)`** merges the batch and position axes: `(64, 64, 43)` becomes `(4096, 43)`, one
+row per next-character prediction, which is the shape `F.cross_entropy` expects. `y.flatten()` lines up
+the 4,096 targets.
+
+**`torch.multinomial(probs, 1, generator=g)`** draws one index at random with the given probabilities;
+the seeded generator makes the draw repeatable. Dividing the logits by a **temperature** before the
+softmax sharpens (below 1) or flattens (above 1) those probabilities. Exercise 3 tries it.
+</details>
+
+**Why the mask matters.** Train the identical model **without** the causal mask. Position `i` can then
+see character `i + 1`, the very character it must predict:
+
+```python
+cheat = train_gpt(causal=False)
+print(f"validation loss, as trained (sees the future):"
+      f" {val_loss(cheat, causal=False):.3f}")
+print(f"validation loss, future hidden:"
+      f"                {val_loss(cheat, causal=True):.3f}")
+print(textwrap.fill(generate(cheat, "this movie was "), 72))
+```
+
+~~~text
+validation loss, as trained (sees the future): 0.035
+validation loss, future hidden:                6.605
+this movie was sizhvsvssssssssssssssssssssssssssssssssssssssssssssssssss
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss
+sstsss ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss
+~~~
+
+As trained, the unmasked model looks almost perfect (loss 0.035): position `i` reads character `i + 1`
+straight from its input and copies it. Hide the future, which is exactly the situation of generation
+(the next character does not exist yet), and its loss is 6.605, worse than the 3.761 of a uniform
+guess. It learned nothing about text, only to copy, and its generated text collapses into one repeated
+letter. The causal mask is what makes the training task the same as the task at generation time; every
+decoder is trained with it.
 
 ## Your Turn
 
-### Exercise 1 -- Causal masking (how GPT reads)
+### Exercise 1 -- A learned positional encoding
 
-An **encoder** lets every position see every other. A **decoder** that generates text left to right must
-not peek at the future. The fix is a **causal mask**: add `-inf` to every score above the diagonal, so
-the softmax zeros out future positions. Apply a causal mask to `MultiHeadSelfAttention` on a length-6
-input and print the attention matrix of head 0. Confirm it is lower-triangular and each row still sums
-to 1.
+Sinusoidal encodings are fixed. BERT and GPT-2/GPT-3 instead **learn** the position signal: a trainable
+`nn.Embedding(max_len, d)` looked up by position, exactly like a token embedding (Step 8's `TinyGPT`
+already uses one). Train a `TinyTransformer` with `pos_mode="learned"` on the order task and report its
+test accuracy. Does a learned signal also solve it?
 
-**Hint:** build `mask = torch.triu(torch.full((6, 6), float("-inf")), diagonal=1)`; pass it as
-`mha(x, mask=mask, return_attn=True)`; the weights are `w[0, 0]` for head 0.
+**Hint:** `torch.manual_seed(0)`, then `train(TinyTransformer(pos_mode="learned"))`.
 
 ```python
 # TODO: your code here
@@ -364,42 +1076,37 @@ to 1.
 <details><summary>Expected Output</summary>
 
 ~~~text
-causal attention (head 0) -- each position attends only to itself and earlier:
-[[1.    0.    0.    0.    0.    0.   ]
- [0.572 0.428 0.    0.    0.    0.   ]
- [0.282 0.455 0.263 0.    0.    0.   ]
- [0.211 0.275 0.179 0.335 0.    0.   ]
- [0.135 0.18  0.163 0.258 0.264 0.   ]
- [0.113 0.259 0.102 0.224 0.183 0.119]]
-row sums: [1. 1. 1. 1. 1. 1.] | weight in the future (upper triangle): 0.0
+learned positional embedding: 1.0000   (sinusoidal: 1.0000)
 ~~~
 
-Position 0 can only attend to itself (weight 1.0); position 5 attends over all six. Every row sums to
-1, and there is exactly **zero** weight above the diagonal -- no position sees the future. This single
-mask is the only structural difference between a BERT-style encoder (bidirectional) and a GPT-style
-decoder (causal, generates one token at a time).
+The learned table solves the order task as completely as the sinusoidal code: what matters is that the
+positions can be told apart, not the form of the signal. BERT, GPT-2 and GPT-3 use learned positions;
+most open models released since 2023 (LLaMA, Mistral, Qwen) use **rotary** encodings instead (concept
+page), which rotate the queries and keys by position rather than adding a vector to the tokens.
 
 ```python
 torch.manual_seed(0)
-mask = torch.triu(torch.full((6, 6), float("-inf")), diagonal=1)
-mha_c = MultiHeadSelfAttention(d=64, n_heads=4)
-_, wc = mha_c(torch.randn(1, 6, 64), mask=mask, return_attn=True)
-print("causal attention (head 0) -- each position attends only to itself and earlier:")
-print(wc[0, 0].detach().numpy())
-print("row sums:", wc[0, 0].sum(-1).detach().numpy(),
-      "| weight in the future (upper triangle):", wc[0, 0].triu(1).sum().item())
+acc_learned = train(TinyTransformer(pos_mode="learned"))
+print(f"learned positional embedding: {acc_learned:.4f}"
+      f"   (sinusoidal: {acc_pe:.4f})")
 ```
 </details>
 
-### Exercise 2 -- A learned positional encoding
+### Exercise 2 -- Rescue the deep Post-LN model with a warm-up
 
-Sinusoidal encodings are fixed. Most modern LLMs instead **learn** the position signal: a trainable
-`nn.Embedding(max_len, d)` looked up by position, exactly like a token embedding. Our `TinyTransformer`
-already supports it with `pos_mode="learned"`. Train one and report its accuracy on the order task.
-Does a learned signal also crack it?
+In Step 6 the 12-block Post-LN model failed. The 2017 paper trained its Post-LN Transformer with a
+**learning-rate warm-up**: the learning rate starts near zero and rises linearly to its full value over
+the first steps. Write `train_warmup`, a copy of `train` that adds a 60-step warm-up, and train the
+12-block Post-LN model with it (seed 0). Does it learn now?
 
-**Hint:** `torch.manual_seed(0)`; build `TinyTransformer(vocab=10, pos_mode="learned")`; call
-`train(model, xtr, ytr, xte, yte)`.
+**Hint:** after creating `opt`, add the scheduler below, and call `sched.step()` right after every
+`opt.step()`. `LambdaLR` multiplies the learning rate by the function's value at step `s`: 1/60 at the
+first step, 1 from step 60 on (the whole run is 240 steps).
+
+~~~python
+sched = torch.optim.lr_scheduler.LambdaLR(
+    opt, lambda s: min(1.0, (s + 1) / 60))
+~~~
 
 ```python
 # TODO: your code here
@@ -408,34 +1115,105 @@ Does a learned signal also crack it?
 <details><summary>Expected Output</summary>
 
 ~~~text
-learned positional embedding accuracy: 1.0000   (sinusoidal was 1.0000)
+12 blocks, Post-LN + 60-step warm-up: 1.0000
 ~~~
 
-A learned positional embedding solves the order task just as completely as the sinusoidal one. The
-*form* of the position signal matters less than its *presence* -- attention only needs some way to tell
-positions apart. Learned encodings are what BERT and GPT actually use, because the model can shape them
-to the data.
+With the warm-up, the 12-block Post-LN model learns the task perfectly instead of answering 0 for
+everything. In our tests the warm-up rescued it with all three seeds, and so did a smaller constant
+learning rate (0.0003): the full-size steps at the very start were the problem, not the architecture.
+Pre-LN avoids the problem without any schedule.
 
 ```python
+def train_warmup(model, warmup=60, epochs=15, bs=256, lr=1e-3):
+    model.to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    sched = torch.optim.lr_scheduler.LambdaLR(
+        opt, lambda s: min(1.0, (s + 1) / warmup))
+    loss_fn = nn.CrossEntropyLoss()
+    for epoch in range(epochs):
+        g = torch.Generator().manual_seed(epoch)
+        perm = torch.randperm(len(ytr), generator=g)
+        model.train()
+        for s in range(0, len(ytr), bs):
+            b = perm[s:s + bs]
+            opt.zero_grad()
+            loss_fn(model(xtr[b]), ytr[b]).backward()
+            opt.step()
+            sched.step()
+    model.eval()
+    with torch.no_grad():
+        pred = model(xte).argmax(1)
+    return (pred == yte).float().mean().item()
+
 torch.manual_seed(0)
-learned = TinyTransformer(vocab=10, pos_mode="learned")
-acc_learned = train(learned, xtr, ytr, xte, yte)
-print(f"learned positional embedding accuracy: {acc_learned:.4f}   (sinusoidal was 1.0000)")
+m = TinyTransformer(n_blocks=12)
+print(f"12 blocks, Post-LN + 60-step warm-up:"
+      f" {train_warmup(m):.4f}")
+```
+</details>
+
+### Exercise 3 -- Sampling temperature
+
+`generate` divides the logits by a **temperature** before the softmax. Generate 150 characters from the
+trained `gpt` with the prompt `"the acting was "` at temperatures 0.5, 1.0 and 1.5 (keep `seed=0`).
+How do the three texts differ?
+
+**Hint:** `generate(gpt, "the acting was ", n=150, temperature=t)`; wrap each with
+`textwrap.fill(..., 72)`.
+
+```python
+# TODO: your code here
+```
+
+<details><summary>Expected Output</summary>
+
+~~~text
+temperature 0.5:
+the acting was a movie, but i have to the should ever the seen the movie
+is force that the get enough. this is produce, i better bad the talked
+it the movie is so be
+temperature 1.0:
+the acting was a movie, bit nothing out authen't even a so in this movie
+is flick who shot, but i did. fourse and anying in the praisical a
+haltogical episodes doc t
+temperature 1.5:
+the acting was about they0 weirdnt doubbluthe 'caels. it's is thater
+anwalcristle weurs-0,, youen director, be, mianying in . dap-a -tephes
+havis't, obedious his you
+~~~
+
+Your three texts will differ from these on another machine; the pattern is what to compare. At 0.5
+the model mostly picks its likeliest characters: the most word-like text, but repetitive ("the
+should ever the seen the movie"). At 1.0 it samples from the probabilities it learned: more varied,
+with more broken words. At 1.5 the distribution is flattened, unlikely characters get picked, and the
+words fall apart ("weirdnt doubbluthe", stray digits). Text generators usually sample below 1, often
+with further filters on top.
+
+```python
+for t in [0.5, 1.0, 1.5]:
+    print(f"temperature {t}:")
+    print(textwrap.fill(
+        generate(gpt, "the acting was ", n=150, temperature=t),
+        72))
 ```
 </details>
 
 ## Summary
 
-- **Multi-head attention** runs `h` attentions in parallel over `d/h`-wide slices and concatenates
-  them, so different heads track different relationships. PyTorch: `nn.MultiheadAttention`.
-- **Positional encoding** adds a per-position signal to the token embeddings, giving order to an
-  otherwise set-based operation. Sinusoidal (fixed) and learned (`nn.Embedding`) both work.
-- The **encoder block** wraps two sublayers -- multi-head self-attention and a position-wise FFN --
-  each in a **residual connection + layer norm** ("Add & Norm"). Same-shape in, same-shape out, so
-  blocks stack. PyTorch: `nn.TransformerEncoderLayer`.
-- On an **order-dependent** task the same Transformer scored **0.4800 (chance)** without positional
-  encoding and **1.0000** with it; the no-position model gave bit-identical logits under any shuffle --
-  proof it is order-blind. **Position is what attention was missing.**
-- A **causal mask** (Ex1) hides the future, turning an encoder into a GPT-style decoder; a **learned**
-  positional embedding (Ex2) works as well as the sinusoidal one. Stack these and you have the
-  architecture behind BERT, GPT, and modern large language models.
+- **Multi-head attention** runs `h` attentions side by side, each over `d/h` numbers, then concatenates
+  and mixes them with `Wo`. It matched `nn.MultiheadAttention` to within `1e-6`. It costs the same
+  arithmetic as one head, but keeps `h` score matrices of `L x L`.
+- **Positional encoding** adds a position signal to every token. Without it, the order task stayed at
+  0.4810, no better than always answering 1 (0.517), and the logits did not change under a shuffle;
+  with it, 1.0000. Trained heads took different jobs (head 0 on A, 0.998; head 1 on B, 0.972).
+- **Layer norm** standardizes each token over its own features, the same alone or in any batch, unlike
+  batch norm. The **encoder block** wraps self-attention and a feed-forward network in residual + layer
+  norm; it matched `nn.TransformerEncoderLayer` and has 33,472 parameters at `d = 64`.
+- **Depth:** without the residual, 6 blocks were stuck at 0.4830 (answering 0 every time); with it
+  they trained. At 12 blocks, Post-LN was stuck without a warm-up (Exercise 2 rescues it), while Pre-LN
+  reached 1.0000.
+- **IMDB:** positional encoding made the same-word sentences score differently, but the more positive
+  one scored higher in only 6 of 8 pairs and accuracy did not move (0.8483 both): the model has
+  position available and little reason to use it. A **language model** (the tiny GPT) needs order at
+  every step; with the **causal mask** it learned to write review-like text, and without it it
+  "learned" to copy the next character and could not generate at all.
