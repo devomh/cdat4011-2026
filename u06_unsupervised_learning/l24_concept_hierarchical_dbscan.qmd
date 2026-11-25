@@ -35,8 +35,8 @@ By the end of this lesson you will be able to:
 
 ## Why This Matters
 
-L23 ended on a freeze-frame: two interleaved crescents, and K-Means slicing each one in half
-because the best a centroid can do is a straight cut through the middle (ARI 0.239). The two arcs
+L23 ended on a freeze-frame: two interleaved crescents, and K-Means cutting a large piece off
+each one, because the best two centroids can do is one straight border across both (ARI 0.239). The two arcs
 were obvious to your eye but invisible to an algorithm whose only idea of "cluster" is *distance to
 a center*. The fix is not a cleverer K-Means -- it is a different **definition of a cluster**.
 

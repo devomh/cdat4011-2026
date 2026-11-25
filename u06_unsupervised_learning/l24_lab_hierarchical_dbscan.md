@@ -8,7 +8,7 @@ difficulty: intermediate
 duration: "45 mins"
 ---
 
-**Goal:** pick up exactly where L23 left off -- K-Means slicing two crescents in half -- and fix it
+**Goal:** pick up exactly where L23 left off -- K-Means cutting a large piece off each crescent -- and fix it
 two ways. You will run **DBSCAN** (density-based) and watch it wrap the crescents that K-Means cut,
 flag outliers as noise, and need no `k`; then build a **dendrogram** with agglomerative
 hierarchical clustering and see how the **linkage** choice decides whether the crescents survive.
