@@ -12,14 +12,16 @@ duration: "90 mins"
 each part buys. Part A works with small tensors: **multi-head attention** and the **encoder block**
 built from scratch and checked against PyTorch's own layers, **positional encoding**, **layer
 normalization** by hand, a small Transformer that solves an order task only when it is told the
-positions, and an experiment on **depth** that shows why the residual connection matters and where the
-normalization should go. Part B moves to real text: an **IMDB** sentiment classifier with and without
-positional encoding, and a **tiny GPT** that learns to write movie-review text one character at a time.
+positions (and an **ablation** that tests what its heads really contribute), and an experiment on
+**depth** that shows why the residual connection matters and where the normalization should go. Part B
+moves to real text: an **IMDB** sentiment classifier with and without positional encoding, and a **tiny
+GPT** that learns to write movie-review text one character at a time, uses the order of what it reads,
+and, in Exercise 4, learns it even without positions.
 Pairs with the concept note [The Transformer Architecture](l22_concept_transformers.qmd).
 
 > **Previously:** L21 -- Attention Mechanisms (one attention layer; blind to order)  |  **Next:** L23 -- K-Means Clustering & Similarity (Unit VI)
 
-> This page is the read-only view. To run the lab, open the notebook (`l22_lab_transformers.ipynb`) -- in Colab via the badge below, or locally. **Use a GPU runtime** (Runtime > Change runtime type > T4 GPU): the lab trains about a dozen models, and on a T4 the whole notebook takes about 4 minutes. A CPU also works but takes much longer (20 to 40 minutes on the machine that produced this page). The outputs shown here came from a CPU, so your numbers on a GPU or another machine may differ slightly.
+> This page is the read-only view. To run the lab, open the notebook (`l22_lab_transformers.ipynb`) -- in Colab via the badge below, or locally. **Use a GPU runtime** (Runtime > Change runtime type > T4 GPU): the lab trains about a dozen models, and on a T4 the whole notebook takes 4 to 5 minutes. A CPU also works but takes much longer (20 to 40 minutes on the machine that produced this page). The outputs shown here came from a CPU, so your numbers on a GPU or another machine may differ slightly.
 >
 > [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devomh/cdat4011-2026/blob/main/u05_deep_learning/l22_lab_transformers.ipynb)
 
@@ -29,7 +31,7 @@ L21 ended with two sentences made of the same words: "this movie is not bad, it 
 movie is not good, it is bad". Its attention classifier gave both exactly the same score, 0.8448,
 because attention compares words by content and never by position. The **Transformer** keeps that
 attention and adds a few parts around it: several attention heads side by side, a position signal, a
-residual connection and a normalization around every sublayer, and a stack of identical blocks. We
+residual connection and a normalization around every sublayer, and a stack of blocks of the same design. We
 build each part, check it against PyTorch, and test what it changes: first on tensors small enough to
 read, then on real movie reviews.
 
@@ -50,6 +52,7 @@ downloaded in Step 7.
 # Setup, cell 2 of 2 -- IMPORTS + SEEDS + DEVICE (safe to re-run)
 import math
 import re
+import copy
 import collections
 import textwrap
 from pathlib import Path
@@ -85,9 +88,12 @@ one convention covers both masks of this lesson: the padding mask (shape `(B, 1,
 every head and every query) and, in Step 8, the causal mask (shape `(L, L)`). Without a mask the
 function is exactly L21's.
 
-**Multi-head attention** splits the width `d` into `h` slices of `d/h` numbers, runs one attention in
-each slice (a **head**), puts the `h` results side by side again, and mixes them with a final linear
-layer `Wo`:
+**Multi-head attention** runs `h` attentions side by side. Each one (a **head**) projects the
+**whole** token, all `d` numbers, down to its own `d/h` queries, keys and values. In code that is one
+`d x d` projection per role, cut into `h` slices of `d/h` columns: the same thing, done in one matrix
+product. Each head attends on its slice, the `h` results are put side by side again, and a final
+linear layer `Wo` mixes them. Inside a head the scores are divided by the square root of `d/h`, not
+of `d`; `attention` reads `d_k` from the shape of `Q`, so this happens by itself:
 
 ```python
 def attention(Q, K, V, mask=None):
@@ -102,7 +108,8 @@ def attention(Q, K, V, mask=None):
     return weights @ V, weights
 
 class MultiHeadSelfAttention(nn.Module):
-    """h heads in parallel, each over a d/h slice."""
+    """h heads in parallel; each projects the whole token
+    to d/h numbers (one d x d projection, cut in h)."""
     def __init__(self, d, n_heads):
         super().__init__()
         assert d % n_heads == 0, "d must split evenly"
@@ -134,13 +141,13 @@ x = torch.randn(2, 7, 64)
 out, w = mha(x, return_attn=True)
 print("input", tuple(x.shape), "-> output", tuple(out.shape))
 print("weights", tuple(w.shape), "= (batch, head, query, key)")
-print("each head works on", mha.d_head, "of the 64 numbers")
+print("each head projects all 64 numbers down to", mha.d_head)
 ```
 
 ~~~text
 input (2, 7, 64) -> output (2, 7, 64)
 weights (2, 4, 7, 7) = (batch, head, query, key)
-each head works on 16 of the 64 numbers
+each head projects all 64 numbers down to 16
 ~~~
 
 Is this the same computation as PyTorch's `nn.MultiheadAttention`? Copy our weights into it and
@@ -170,9 +177,11 @@ weights match: True
 Both match to within `1e-6`, so our class computes what PyTorch's built-in computes; from here on you
 can read `nn.MultiheadAttention` as "the class above, written for speed".
 
-**What do the heads cost?** Each head works on `d/h` numbers, so the matrix products of four heads
-over 16 numbers add up to the same arithmetic as one head over 64. Memory is different: every head keeps
-its own `L x L` weight matrix. Measure it for one sequence of 1,024 tokens:
+**What do the heads cost?** Each head's queries, keys and values have `d/h` numbers, so the matrix
+products of four heads over 16 numbers add up to the same arithmetic as one head over 64. The softmax is different: it now
+runs over `h` matrices of `L x L` scores instead of one. So is the memory, in an implementation like
+ours that stores the weights: every head keeps its own `L x L` weight matrix. Measure it for one
+sequence of 1,024 tokens:
 
 ```python
 xl = torch.randn(1, 1024, 64)
@@ -193,7 +202,9 @@ for n_heads in [1, 4, 16]:
 ~~~
 
 The weights grow with the number of heads: `h` heads hold `h` matrices of `L x L` scores. That is L21's
-quadratic cost, multiplied by `h`.
+quadratic memory, multiplied by `h`. Fused kernels such as FlashAttention (L21), which PyTorch's
+`F.scaled_dot_product_attention` uses on a GPU when it can, compute the same result in tiles and never
+store the full matrices; the arithmetic still grows with `L x L`.
 
 <details><summary>(Optional) Reading the code: <code>view</code> + <code>transpose</code>, <code>reshape</code>, <code>copy_</code></summary>
 
@@ -213,7 +224,7 @@ parameter must not be recorded for backpropagation.
 
 ### Step 2: Positional Encoding
 
-Attention treats its input as a set. To tell it where each token sits, add a **position signal** to
+Self-attention without a causal mask treats its input as a set. To tell it where each token sits, add a **position signal** to
 each token's vector before the first block. The original Transformer uses fixed **sinusoidal**
 encodings: dimension pair `(2i, 2i+1)` holds the sine and cosine of the position at a frequency that
 falls geometrically with `i`. The concept page works out the first three positions with `d = 4` by
@@ -574,9 +585,12 @@ no-PE logits unchanged by the shuffle: True
 PE logits unchanged by the shuffle:    False
 ~~~
 
-The model without positions gives the same logits however the tokens are arranged (up to rounding):
-self-attention is permutation-equivariant (L21), and the `CLS` readout ignores where the others sit, so
-"A before B" and "B before A" look identical to it. Adding the position signal breaks that symmetry.
+The model without positions gives the same logits however the other tokens are arranged (up to
+rounding): self-attention is permutation-equivariant (L21), and the `CLS` readout ignores where the
+others sit, so "A before B" and "B before A" look identical to it. Adding the position signal breaks
+that symmetry. (The shuffle keeps `CLS` at position 0. Moving it would change which token the readout
+reads, and so the logits, even without positions. And all of this holds for self-attention without a
+causal mask; Exercise 4 shows that a causal decoder is a different story.)
 
 **What do the trained heads do?** For the `CLS` query of the last block, average each head's attention
 weight on the A position and on the B position over the 1,000 test sequences:
@@ -625,12 +639,71 @@ head   on A    on B
 ~~~
 
 The heads are not copies of each other. Averaged over the test set, head 0 puts 0.998 of the `CLS`
-token's attention on A and head 1 puts 0.972 on B: the two facts the answer depends on, each found by
-its own head. Heads 2 and 3 spread their weight more (head 3 leans toward B). The plot shows one test
-sequence, where B comes before A (label 0): head 0 sits on A, heads 1 and 3 on B. These roles depend on
-the random start. Retrained with other seeds, the division of labor changes; in one of our runs, no
-head of the last block looked at B (three of them read A), presumably because an earlier block had
-already moved B's information into the vectors the last block reads. What stays is that trained heads take sharp, different jobs.
+token's attention on A and head 1 puts 0.972 on B, the two facts the answer depends on. On these
+averages, heads 2 and 3 look less decisive (head 3 leans toward B). The plot shows one test sequence,
+where B comes before A (label 0): head 0 sits on A, heads 1 and 3 on B.
+
+It is tempting to conclude that head 0 finds A and head 1 finds B. The weights cannot tell us that:
+they show where a head looks, not whether the answer needs what it finds. Test it directly. Switch
+off one head of the last block, by zeroing the 16 columns of `Wo` through which its output enters the
+mix, and measure the test accuracy; then switch off the other three and keep only that one. The table
+also shows each head's average weight on whichever marker comes **first** in the sequence:
+
+```python
+def drop_heads(model, heads):
+    """a copy of model with these last-block heads off"""
+    # deepcopy: an independent copy, so with_pos is
+    # left untouched
+    m = copy.deepcopy(model)
+    Wo = m.blocks[-1].attn.Wo.weight
+    with torch.no_grad():
+        for k in heads:
+            # head k's 16 numbers enter Wo through
+            # columns 16k to 16k + 15
+            Wo[:, k * 16:(k + 1) * 16] = 0
+    return m
+
+@torch.no_grad()
+def accuracy(model):
+    pred = model(xte).argmax(1)
+    return (pred == yte).float().mean().item()
+
+# weight on whichever marker comes first
+pos_a = (xc == 1).float().argmax(1)
+pos_b = (xc == 2).float().argmax(1)
+first = torch.minimum(pos_a, pos_b)
+on_1st = cls_row[torch.arange(len(xc)), :, first].mean(0)
+
+print("head  on A   on B   on 1st  without it  only it")
+for k in range(4):
+    others = [j for j in range(4) if j != k]
+    a_wo = accuracy(drop_heads(with_pos, [k]))
+    a_only = accuracy(drop_heads(with_pos, others))
+    print(f"{k:4d}  {on_a[k].item():5.3f}  "
+          f"{on_b[k].item():5.3f}  {on_1st[k].item():6.3f}"
+          f"  {a_wo:10.4f}  {a_only:7.4f}")
+print("all four heads of the last block off:",
+      f"{accuracy(drop_heads(with_pos, range(4))):.4f}")
+```
+
+~~~text
+head  on A   on B   on 1st  without it  only it
+   0  0.998  0.000   0.516      0.9960   0.8750
+   1  0.002  0.972   0.485      1.0000   0.9760
+   2  0.055  0.364   0.105      1.0000   0.9210
+   3  0.338  0.558   0.791      0.9420   1.0000
+all four heads of the last block off: 0.9110
+~~~
+
+The B head can go at no cost at all. The head the model misses most is head 3, whose A and B averages
+looked mixed, and head 3 on its own is enough. The third column shows why: sequence by sequence, head 3
+looks at **whichever marker comes first**, exactly the relation the label asks about, and averaging
+over A and B hid it. The heads overlap, and a large attention weight does not say which head the answer
+depends on. That is L21's warning, now measured: **attention weights are a hint, not an explanation**.
+Switching parts off and measuring (an **ablation**) is how you test what a part contributes. The roles
+also depend on the random start. In our runs with seeds 1 and 2 the last block still had sharp heads
+(seed 2: 0.965 on B), yet switching off all four of them cost almost nothing (0.996 and 0.984), while
+switching off the first block's heads did hurt (0.483 and 0.711).
 
 ### Step 6: Depth -- the Residual and Where the Norm Goes
 
@@ -667,7 +740,7 @@ At 12 blocks the residual is not enough for Post-LN, while Pre-LN learns the tas
 tests with seeds 0, 1 and 2, the 12-block Post-LN model was stuck in two runs of three (the third
 reached 0.968) and Pre-LN reached 1.0000 in all three; the 6-block model without a residual was stuck
 in all three. Post-LN is not broken: the 2017 paper trained it with a learning-rate **warm-up**, and
-Exercise 2 shows that this rescues it. Pre-LN does not need one; most models since GPT-2 put the norm
+Exercise 2 shows that this rescues it. Here Pre-LN needed none; most models since GPT-2 put the norm
 first.
 
 ## Part B -- Real Text: IMDB Reviews
@@ -835,31 +908,48 @@ pairs = [
      "never fun , always boring", +1)]
 first = [p[0] for p in pairs]
 second = [p[1] for p in pairs]
-print(f"{'first sentence of the pair':34s}"
-      "   no PE: 1st   2nd |   PE: 1st   2nd")
+print("P(positive) for the 1st and 2nd sentence of each pair")
 right = 0
-for i, (s1, _, sign) in enumerate(pairs):
+for i, (s1, s2, sign) in enumerate(pairs):
     p = {}
     for name, model in text_models.items():
         pr = predict_proba(model, encode([first[i], second[i]]))
         p[name] = pr.tolist()
     gap = p["sinusoidal"][0] - p["sinusoidal"][1]
     right += int(gap * sign > 0)
-    print(f"{s1[:34]:34s}   {p['none'][0]:8.3f} {p['none'][1]:5.3f}"
-          f" | {p['sinusoidal'][0]:7.3f} {p['sinusoidal'][1]:5.3f}")
+    print(f"{i + 1}. {s1}\n   {s2}")
+    print(f"   no PE: {p['none'][0]:.3f} {p['none'][1]:.3f}"
+          f"   PE: {p['sinusoidal'][0]:.3f}"
+          f" {p['sinusoidal'][1]:.3f}")
 print(f"PE: the more positive sentence scored higher in {right}/8")
 ```
 
 ~~~text
-first sentence of the pair           no PE: 1st   2nd |   PE: 1st   2nd
-this movie is not bad , it is good      0.008 0.008 |   0.023 0.011
-the acting was not great , it was       0.047 0.047 |   0.024 0.025
-i expected a bad film but it was a      0.906 0.906 |   0.601 0.472
-the story is boring but the ending      0.014 0.014 |   0.072 0.023
-not a good movie , a bad one            0.005 0.005 |   0.004 0.005
-i thought it would be awful , it w      0.249 0.249 |   0.957 0.976
-the first half is bad , the rest i      0.015 0.015 |   0.015 0.013
-never boring , always fun               0.983 0.983 |   0.997 0.997
+P(positive) for the 1st and 2nd sentence of each pair
+1. this movie is not bad , it is good
+   this movie is not good , it is bad
+   no PE: 0.008 0.008   PE: 0.023 0.011
+2. the acting was not great , it was terrible
+   the acting was not terrible , it was great
+   no PE: 0.047 0.047   PE: 0.024 0.025
+3. i expected a bad film but it was a great film
+   i expected a great film but it was a bad film
+   no PE: 0.906 0.906   PE: 0.601 0.472
+4. the story is boring but the ending is wonderful
+   the story is wonderful but the ending is boring
+   no PE: 0.014 0.014   PE: 0.072 0.023
+5. not a good movie , a bad one
+   not a bad movie , a good one
+   no PE: 0.005 0.005   PE: 0.004 0.005
+6. i thought it would be awful , it was excellent
+   i thought it would be excellent , it was awful
+   no PE: 0.249 0.249   PE: 0.957 0.976
+7. the first half is bad , the rest is brilliant
+   the first half is brilliant , the rest is bad
+   no PE: 0.015 0.015   PE: 0.015 0.013
+8. never boring , always fun
+   never fun , always boring
+   no PE: 0.983 0.983   PE: 0.997 0.997
 PE: the more positive sentence scored higher in 6/8
 ~~~
 
@@ -870,10 +960,18 @@ orders apart. But it has not learned what the order *means*. The more positive s
 differences are tiny (0.024 against 0.025), and in only one pair do the two sentences land on opposite sides of 0.5 (0.601 / 0.472). Both
 "this movie is not bad, it is good" and its twin are still called negative.
 
-The reason is the training signal. A review's label is decided mostly by *which* words it contains
-(that is why L21's bag of embeddings won), so nothing in 25,000 labeled reviews pushes the model to
-use the positions it is given. **Positional encoding makes order available; the training objective
-decides whether the model uses it.** Step 8 uses an objective that cannot be met without order.
+Treat these eight pairs with care: they are short, made-up sentences, unlike the reviews the models
+trained on, and their scores sit near 0 or 1, where small changes mean little. Two order-blind models
+can disagree completely on them: L21's attention model gave "this movie is not bad, it is good"
+0.8448, this one 0.008.
+
+So, under these conditions (a small model, trained from scratch for 5 epochs on 25,000 labeled
+reviews), position did not help. The likely reason is the training signal. A review's label is decided
+mostly by *which* words it contains (that is why L21's bag of embeddings won), and each review of about
+230 words (median 173) gives the model a single label to learn from, so little pushes it to use the
+positions it is given. **Positional encoding makes order available; the training objective decides
+whether the model uses it.** Step 8 uses an objective that gives a target at every position and cannot
+be met without order.
 
 ### Step 8: A Tiny GPT on Review Text
 
@@ -905,18 +1003,24 @@ train 4523589 | validation 502622
 The model is a **decoder**: token and learned position embeddings, a stack of Pre-LN blocks whose
 self-attention carries a **causal mask** (position `i` may attend to positions `0..i` only), a final
 layer norm, and a linear layer that turns every position's vector into scores over the 43 characters.
-Each training window of 64 characters gives 64 next-character examples at once: position `i` must
-predict character `i + 1`.
+The blocks are Step 4's `EncoderBlock` class, unchanged: a decoder-only block *is* the encoder block
+with a causal mask. The final layer norm is there because in a Pre-LN stack the main residual path is
+never normalized, so its scale drifts from block to block; one norm at the top fixes it before the
+output layer (GPT-2 does the same). The `pos` switch lets Exercise 4 train the same model without
+positions. Each training window of 64 characters gives 64 next-character examples at once: position
+`i` must predict character `i + 1`.
 
 ```python
 CTX = 64
 
 class TinyGPT(nn.Module):
     def __init__(self, vocab, d=128, n_heads=4, n_blocks=4,
-                 d_ff=512, causal=True):
+                 d_ff=512, causal=True, pos=True):
         super().__init__()
-        self.causal = causal
+        self.causal, self.pos = causal, pos
         self.tok_emb = nn.Embedding(vocab, d)
+        # created even when pos=False, so both versions
+        # start from the same random weights
         self.pos_emb = nn.Embedding(CTX, d)
         self.blocks = nn.ModuleList(
             [EncoderBlock(d, n_heads, d_ff, norm_first=True)
@@ -931,8 +1035,10 @@ class TinyGPT(nn.Module):
         if causal:   # lower triangle: True = may attend
             mask = torch.tril(torch.ones(L, L, dtype=torch.bool,
                                          device=x.device))
-        pos = torch.arange(L, device=x.device)
-        h = self.tok_emb(x) + self.pos_emb(pos)
+        h = self.tok_emb(x)
+        if self.pos:
+            pos = torch.arange(L, device=x.device)
+            h = h + self.pos_emb(pos)
         for blk in self.blocks:
             h = blk(h, mask)
         return self.out(self.norm(h))   # (B, L, vocab)
@@ -957,9 +1063,10 @@ def val_loss(model, causal):
             logits.flatten(0, 1), y.flatten()).item())
     return sum(losses) / len(losses)
 
-def train_gpt(causal, steps=1500, bs=64):
+def train_gpt(causal, pos=True, steps=1500, bs=64):
     torch.manual_seed(0)
-    model = TinyGPT(len(chars), causal=causal).to(device)
+    model = TinyGPT(len(chars), causal=causal,
+                    pos=pos).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
     g = torch.Generator().manual_seed(0)
     model.train()
@@ -1031,6 +1138,59 @@ the seeded generator makes the draw repeatable. Dividing the logits by a **tempe
 softmax sharpens (below 1) or flattens (above 1) those probabilities. Exercise 3 tries it.
 </details>
 
+**Does it use order?** Step 7's classifier had positions and barely used them. Check this model the
+same way it is used: give it 64 characters and score its prediction of the next one, once with the
+characters in their true order, once with the first 56 shuffled (the last 8 kept in place), and once
+with all 64 shuffled. The characters are the same each time; only their order changes:
+
+```python
+@torch.no_grad()
+def last_char_loss(model, n_shuffled):
+    """loss on the character after each validation window,
+    with the window's first n_shuffled characters shuffled"""
+    model.eval()
+    g = torch.Generator().manual_seed(123)
+    gs = torch.Generator().manual_seed(7)
+    losses = []
+    for _ in range(20):
+        x, y = get_batch(val_ids, 128, g)
+        # a random order for the first n_shuffled positions
+        order = torch.rand(len(x), n_shuffled, generator=gs)
+        idx = order.argsort(1).to(device)
+        x[:, :n_shuffled] = x[:, :n_shuffled].gather(1, idx)
+        logits = model(x, causal=True)[:, -1]
+        loss = F.cross_entropy(logits, y[:, -1])
+        losses.append(loss.item())
+    return sum(losses) / len(losses)
+
+for n, name in [(0, "true order"), (56, "first 56 shuffled"),
+                (64, "all 64 shuffled")]:
+    print(f"{name:18s} loss {last_char_loss(gpt, n):.3f}")
+```
+
+~~~text
+true order         loss 1.577
+first 56 shuffled  loss 1.593
+all 64 shuffled    loss 4.946
+~~~
+
+Shuffle the whole window and the loss more than triples, to worse than a uniform guess (3.761): the
+model reads the order of its context, not just which characters are in it. Keep the last 8 characters
+in place and the loss barely moves: almost all the order it uses is in the last few characters, which
+is what a small model trained for 20 seconds can be expected to learn. (Exact values vary a little
+between machines; in our runs the full shuffle gave 4.83 to 4.95.)
+
+<details><summary>(Optional) Reading the code: <code>rand().argsort(1)</code>, <code>gather</code></summary>
+
+**`torch.rand(len(x), n_shuffled).argsort(1)`** draws random numbers for each row and returns, per row,
+the positions that would sort them. Random numbers sort into a random order, so each row gets its own
+random permutation of `0..n_shuffled-1`, all rows at once.
+
+**`x[:, :n].gather(1, idx)`** builds a new tensor whose row `r`, column `j` is `x[r, idx[r, j]]`: each
+row's first `n` characters are read in the shuffled order. Writing the result back into `x[:, :n]`
+leaves the last `64 - n` characters where they were.
+</details>
+
 **Why the mask matters.** Train the identical model **without** the causal mask. Position `i` can then
 see character `i + 1`, the very character it must predict:
 
@@ -1082,7 +1242,8 @@ learned positional embedding: 1.0000   (sinusoidal: 1.0000)
 The learned table solves the order task as completely as the sinusoidal code: what matters is that the
 positions can be told apart, not the form of the signal. BERT, GPT-2 and GPT-3 use learned positions;
 most open models released since 2023 (LLaMA, Mistral, Qwen) use **rotary** encodings instead (concept
-page), which rotate the queries and keys by position rather than adding a vector to the tokens.
+page), which add nothing to the tokens: in every attention layer they rotate the queries and keys by
+their positions, so each score depends on the signed offset between the two tokens.
 
 ```python
 torch.manual_seed(0)
@@ -1121,7 +1282,7 @@ sched = torch.optim.lr_scheduler.LambdaLR(
 With the warm-up, the 12-block Post-LN model learns the task perfectly instead of answering 0 for
 everything. In our tests the warm-up rescued it with all three seeds, and so did a smaller constant
 learning rate (0.0003): the full-size steps at the very start were the problem, not the architecture.
-Pre-LN avoids the problem without any schedule.
+Here Pre-LN avoids the problem without any schedule.
 
 ```python
 def train_warmup(model, warmup=60, epochs=15, bs=256, lr=1e-3):
@@ -1198,14 +1359,69 @@ for t in [0.5, 1.0, 1.5]:
 ```
 </details>
 
+### Exercise 4 -- Does a decoder need positions?
+
+Step 5 showed that self-attention without a mask cannot see order unless it is given positions. A
+decoder has a causal mask, and that changes things: position 0 sees one character, position 1 sees
+two, position 63 sees all 64. Train the tiny GPT **without** its position embeddings
+(`train_gpt(causal=True, pos=False)`), then compare its validation loss with the `gpt` of Step 8, run
+the shuffle check `last_char_loss` on it, and generate a sample. Does it learn order?
+
+**Hint:** `val_loss(model, causal=True)`; `last_char_loss(model, n)` for `n` in 0, 56, 64; and
+`generate(model, "this movie was ")`.
+
+```python
+# TODO: your code here
+```
+
+<details><summary>Expected Output</summary>
+
+~~~text
+validation loss, no positions: 1.591   (Step 8, learned positions: 1.544)
+true order         loss 1.642
+first 56 shuffled  loss 1.661
+all 64 shuffled    loss 5.047
+this movie was a movie, but i hand to love he maned and horrorible movie
+in fille who shot, but i did. foor because tire in the producerst budget
+to the stufffic the startest fair innemarks up her actor but pay punk
+~~~
+
+Yes. Without any position signal the decoder ends only a little behind the one with learned positions
+(1.591 against 1.544; in our runs on 1, 2 and the default number of CPU threads the gap was always
+about 0.05), writes
+text of the same kind, and shuffling its context hurts it just as much: it uses order. The reason is
+the causal mask. Without a mask, self-attention treats its input as a set, which is why Step 5's
+encoder needed positions. With the mask, position 0 sees one character, position 1 sees two, position
+63 sees 64, so a position can work out from what it may see roughly where it is. Haviv et al. (2022)
+found the same in much larger language models. Positions still help a little here, and real decoders
+use them; but "a Transformer without positional encoding is blind to order" is true only of attention
+without a causal mask.
+
+```python
+nopos = train_gpt(causal=True, pos=False)
+print(f"validation loss, no positions: "
+      f"{val_loss(nopos, causal=True):.3f}"
+      f"   (Step 8, learned positions:"
+      f" {val_loss(gpt, causal=True):.3f})")
+for n, name in [(0, "true order"), (56, "first 56 shuffled"),
+                (64, "all 64 shuffled")]:
+    print(f"{name:18s} loss {last_char_loss(nopos, n):.3f}")
+print(textwrap.fill(generate(nopos, "this movie was "), 72))
+```
+</details>
+
 ## Summary
 
-- **Multi-head attention** runs `h` attentions side by side, each over `d/h` numbers, then concatenates
-  and mixes them with `Wo`. It matched `nn.MultiheadAttention` to within `1e-6`. It costs the same
-  arithmetic as one head, but keeps `h` score matrices of `L x L`.
-- **Positional encoding** adds a position signal to every token. Without it, the order task stayed at
-  0.4810, no better than always answering 1 (0.517), and the logits did not change under a shuffle;
-  with it, 1.0000. Trained heads took different jobs (head 0 on A, 0.998; head 1 on B, 0.972).
+- **Multi-head attention** runs `h` attentions side by side; each head projects the whole token to
+  `d/h` numbers, and the results are concatenated and mixed by `Wo`. It matched `nn.MultiheadAttention`
+  to within `1e-6`. Its matrix products cost the same as one head's, but the softmax runs `h` times, and
+  stored weights take `h` matrices of `L x L`.
+- **Positional encoding** adds a position signal to every token. Without it, the encoder's order task
+  stayed at 0.4810, no better than always answering 1 (0.517), and the logits did not change when the
+  tokens after `CLS` were shuffled; with it, 1.0000.
+- **Attention weights are not an explanation.** The last block's heads looked specialized (0.998 on A,
+  0.972 on B), but the ablation showed the B head could go at no cost, while head 3, whose A and B
+  averages looked mixed, mattered most (0.9420 without it): it looks at whichever marker comes first.
 - **Layer norm** standardizes each token over its own features, the same alone or in any batch, unlike
   batch norm. The **encoder block** wraps self-attention and a feed-forward network in residual + layer
   norm; it matched `nn.TransformerEncoderLayer` and has 33,472 parameters at `d = 64`.
@@ -1213,7 +1429,11 @@ for t in [0.5, 1.0, 1.5]:
   they trained. At 12 blocks, Post-LN was stuck without a warm-up (Exercise 2 rescues it), while Pre-LN
   reached 1.0000.
 - **IMDB:** positional encoding made the same-word sentences score differently, but the more positive
-  one scored higher in only 6 of 8 pairs and accuracy did not move (0.8483 both): the model has
-  position available and little reason to use it. A **language model** (the tiny GPT) needs order at
-  every step; with the **causal mask** it learned to write review-like text, and without it it
-  "learned" to copy the next character and could not generate at all.
+  one scored higher in only 6 of 8 pairs and accuracy did not move (0.8483 both): under these
+  conditions the model has position available and, most likely, too little reason to use it. A
+  **language model** (the tiny GPT) gets a target at every position and needs order to meet it; with the
+  **causal mask** it learned to write review-like text and to use the order of what it reads (shuffling
+  its context sent its loss from 1.577 to 4.946), and without the mask it "learned" to copy the next
+  character and could not generate at all.
+- **A causal decoder learns order without positions** (Exercise 4): the mask tells each position how
+  many tokens precede it. "Blind to order" is a property of attention without a causal mask.
