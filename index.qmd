@@ -49,7 +49,7 @@ and its purpose is to help the material stick, not to rank you.
 | [V — Deep Learning](u05_deep_learning/l14_concept_perceptron_neural_networks.qmd) | L14–L22 | Perceptrons to multilayer networks; backpropagation and autodiff; training deep networks; CNNs on MNIST, Fashion-MNIST and CIFAR-10; transfer learning; autoencoders; attention and the Transformer |
 | [VI — Unsupervised Learning](u06_unsupervised_learning/l23_concept_kmeans_clustering.qmd) | L23–L25 | Similarity and k-means; hierarchical and density-based clustering; Gaussian mixtures and the EM algorithm |
 | [VII — Dimensionality Reduction](u07_dimensionality_reduction/l26_concept_pca.qmd) | L26–L27 | Principal component analysis; factor analysis and independent component analysis |
-| [VIII — Reinforcement Learning](u08_reinforcement_learning/l28_concept_reinforcement_learning.qmd) | L28 | The reinforcement-learning paradigm — agents, states, rewards, and how it differs from everything before it |
+| [VIII — Reinforcement Learning](u08_reinforcement_learning/l28_concept_reinforcement_learning.qmd) | L28 | The reinforcement-learning paradigm — agents, states, rewards — from value iteration on a gridworld to tabular Q-learning to a Deep Q-Network that learns to land a lunar lander |
 
 ## Running the labs
 

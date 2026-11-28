@@ -87,7 +87,7 @@ This course is organized around what kind of feedback the data gives the learner
 |----------|----------------------|-----------------|---------|----------------|
 | **Supervised learning** | labeled — every example carries the desired answer | classification, regression | species from call features; house price from size | Units II-V |
 | **Unsupervised learning** | unlabeled — structure must be found, not matched | clustering, dimensionality reduction | grouping customers by behavior | Units VI-VII |
-| **Reinforcement learning** | not a fixed dataset — an *agent* acts and receives rewards | sequential decision making, control | a bot learning a game | Unit VIII (paradigm here; hands-on in the CDAT 4013 lab) |
+| **Reinforcement learning** | not a fixed dataset — an *agent* acts and receives rewards | sequential decision making, control | a bot learning a game | Unit VIII (L28: from value iteration to a Deep Q-Network) |
 
 Two distinctions do most of the classification work for you: **does each example carry
 the desired answer** (supervised vs unsupervised), and **does the system act and get
